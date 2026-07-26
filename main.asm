@@ -37,6 +37,10 @@ scroll_heading_position = $46
 scroll_heading_delay = $47
 sound_loop_counter = $48
 end_loop_counter = $49
+score_for_eat_snake_head = $4a
+score_for_eat_snake_body = $4b
+score_for_eat_egg_low = $4c
+score_for_eat_egg_high = $4d
 sound_hiss_counter = $53
 player_score = $54  ;3 bytes $54, $55, $56
 high_score = $57  ;3 bytes $57, $58, $59
@@ -80,7 +84,7 @@ data_zero_page_80_99
     !byte $aa
     !byte $aa
     !byte $aa  ;$99
-	!fill 4,$aa
+	!fill 4, $aa
 data_zero_page_9e_f7
     !byte $3c  ;$9e, $bc, $da
 	!byte $06
@@ -140,6 +144,8 @@ start_game_play
 	lda #1
 	sta current_maze
 
+;-----------------------------------------------------------------------------------
+
 play_one_life
 	ldx #247
 	txs
@@ -152,16 +158,17 @@ play_one_life
 	jsr plot_high_score_on_screen
 	jsr plot_player_score_on_screen
 	jsr plot_player_lives_on_screen
-	jsr LACEA  ;TODO: update score
+	jsr calculate_score_values_for_maze
 	jsr clear_frog_on_screen
-	jsr LA8F6  ;TODO: unknown effect
+	jsr close_snake_entrance_door
 	jsr set_enemy_snake_start_position
 	jsr play_about_to_start_maze_tune
+
 .game_play_loop
 	jsr handle_player_movement
 	jsr handle_enemy_snake_movement
 	jsr handle_player_and_enemy_snake_interactions
-	jsr LB06F  ;TODO: unknown effect
+	jsr handle_snake_eggs
 	jsr more_player_and_enemy_snake_interactions
 	jsr plot_frog_on_screen
 	jsr play_sounds
@@ -254,7 +261,10 @@ delay_using_Y
 direction_list
 	!byte JOY_UP, JOY_DOWN, JOY_RIGHT, JOY_LEFT, JOY_FIRE
 
+;-----------------------------------------------------------------------------------
+
 get_joystick_movement
+
 	jsr read_joystick
 	bcs .no_joystick_action
 	cmp #JOY_FIRE
@@ -363,6 +373,7 @@ initialise_0200_onwards_with_increments_of_11
 ;-----------------------------------------------------------------------------------
 
 clear_512_custom_characters
+
 	lda #>_CUSTOM_CHARACTERS_ADDR
 	ldy #<_CUSTOM_CHARACTERS_ADDR
 	sta $01
@@ -415,6 +426,8 @@ data_screen_bitmap_address_high
     !byte $10, $10, $11, $12, $12, $13, $14, $14
 	!byte $15, $16, $16, $17, $18, $18, $19, $1a
 	!byte $1b, $1b, $1c, $1d, $1d, $1e
+
+;-----------------------------------------------------------------------------------
 
 LA21C
 	lda $0e
@@ -746,7 +759,10 @@ LA3DB
 	sta $11
 	rts
 
+;-----------------------------------------------------------------------------------
+
 handle_player_movement
+
     ldy #0
 	dec $1b
 	bne LA3F8
@@ -842,7 +858,7 @@ LA3F8
 	cpy #118
 	bne @LA4B5
 	jsr @LA4AE
-	jmp LA904
+	jmp open_snake_entrance_door
 
 @LA49E
     ldy $0f
@@ -897,6 +913,7 @@ DATA_UNKNOWN_G14
 ;-----------------------------------------------------------------------------------
 
 initialise_9000_series_and_other_data
+
     lda #$a4
 	sta $00
 	lda #$c0
@@ -1042,6 +1059,7 @@ data_maze_addresses_high
 ;-----------------------------------------------------------------------------------
 
 draw_maze
+
     ldx current_maze
 	cpx #21
 	bcc .set_maze_build_from_address
@@ -1290,12 +1308,13 @@ LA8D6
 
 ;-----------------------------------------------------------------------------------
 
-DATA_UNKNOWN_4
+data_for_snake_entrance_door
 	!byte $55, $55, $55, $55, $00, $00, $00, $00
 
 ;-----------------------------------------------------------------------------------
 
-LA8F6
+close_snake_entrance_door
+
 	lda #0
 	sta $08
 	lda $80
@@ -1303,15 +1322,15 @@ LA8F6
 	lda #7
 	jsr LA91C
 	clc
-LA904
+open_snake_entrance_door
     ldx #166
 	ldy #128
 LA908
     stx $0e
 	sty $0f
-	lda #<DATA_UNKNOWN_4
+	lda #<data_for_snake_entrance_door
 	sta $10
-	lda #>DATA_UNKNOWN_4
+	lda #>data_for_snake_entrance_door
 	sta $11
 	bcs @LA919
 	jmp LA266
@@ -1400,7 +1419,7 @@ LA986
 
 data_score_heading
 	!pet "score"
-	!fill 8,$60
+	!fill 8, $60
     !pet "hi"
 	!byte $00
 data_level_heading
@@ -1415,6 +1434,7 @@ data_level_heading
 ;-----------------------------------------------------------------------------------
 
 plot_level_and_headings_on_screen
+
     lda #<data_score_heading
 	sta text_pointer_low
 	lda #>data_score_heading
@@ -1454,6 +1474,7 @@ plot_level_and_headings_on_screen
 ;-----------------------------------------------------------------------------------
 
 clear_player_and_high_score
+
     ldx #5
 clear_player_score
     lda #0
@@ -1465,7 +1486,7 @@ clear_player_score
 
 ;-----------------------------------------------------------------------------------
 
-update_player_score_large_amount
+update_player_score_low_amount
     sed
 	clc
 	adc player_score+2
@@ -1496,6 +1517,7 @@ update_player_score
 ;-----------------------------------------------------------------------------------
 
 plot_player_score_on_screen
+
     ldx #0
 	lda #0
 	ldy #48
@@ -1549,6 +1571,7 @@ plot_score_on_screen
 ;-----------------------------------------------------------------------------------
 
 plot_high_score_on_screen
+
 	ldx #3
 	lda #0
 	ldy #128
@@ -1586,6 +1609,7 @@ add_one_to_player_lives
 	bcs .subroutine_return
 	inx
 	stx player_lives
+
 plot_player_lives_on_screen
     lda #144
 	sta $0e
@@ -1610,6 +1634,7 @@ update_player_loses_life
 ;-----------------------------------------------------------------------------------
 
 play_sounds
+
     ldx #4
 .play_sounds_loop
     lda $6c,x
@@ -1682,7 +1707,10 @@ data_clear_all_sound_channels
 data_sound_end
     !byte $ff
 
+;-----------------------------------------------------------------------------------
+
 clear_all_sound_channels
+
     ;clear sounds on each channel
     lda #%00101010  ;aux colour red, volume 10
 	sta _VOLUME
@@ -1694,6 +1722,7 @@ clear_all_sound_channels
 ;-----------------------------------------------------------------------------------
 
 set_enemy_snake_start_position
+
     lda current_maze
 	cmp #1
 	bne @LAB42
@@ -1887,6 +1916,7 @@ LAC3E
 ;-----------------------------------------------------------------------------------
 
 init_zero_page_with_timers
+
     lda $9114  ;timer
 	sta $78
 	lda $9124  ;timer
@@ -1902,6 +1932,7 @@ init_zero_page_with_timers
 ;-----------------------------------------------------------------------------------
 
 more_player_and_enemy_snake_interactions
+
     ldx #5
 @LAC6C
     ldy $2e,x
@@ -2017,48 +2048,58 @@ LACB7
 	bne @LACC5
 	rts
 
-LACEA
+;-----------------------------------------------------------------------------------
+
+calculate_score_values_for_maze
+
     lda current_maze
 	cmp #21
-	bcc @LACF2
-	lda #20
-@LACF2
+	bcc .maze_less_than_21
+	lda #20  ;cap maze to 20 for calculating score values
+.maze_less_than_21
     pha
-	lsr
-	tax
-	tay
+	lsr  ;divide maze number (level) by two
+	tax  ;becomes X
+	tay  ;and Y
+
+    ;calculate score for eating snake head
 	lda #0
-	sed
+	sed  ;set to decimal
 	clc
-@LACFA
-    adc #2
+.increase_eat_snake_head_score_loop
+    adc #2  ;represents increment of 200 points varied by maze number divided by two
 	dex
-	bpl @LACFA
-	sta $4a
+	bpl .increase_eat_snake_head_score_loop
+	sta score_for_eat_snake_head
+
+    ;calculate score for eating snake body segment
 	clc
 	lda #0
-@LAD04
-    adc #1
+.increase_eat_snake_body_score_loop
+    adc #1  ;represents increment of 100 points varied by maze number divided by two
 	dey
-	bpl @LAD04
-	sta $4b
-	pla
+	bpl .increase_eat_snake_body_score_loop
+	sta score_for_eat_snake_body
+
+	pla  ;get maze number (level) again
 	tax
 	lda #0
-	sta $4d
-	sta $4c
-@LAD13
+	sta score_for_eat_egg_high
+	sta score_for_eat_egg_low
+.increase_eat_egg_score_by_150_per_level_loop
     clc
-	lda #80
-	adc $4c
-	sta $4c
+	lda #80  ;$50 in decimal mode is 50
+	adc score_for_eat_egg_low
+	sta score_for_eat_egg_low
 	lda #1
-	adc $4d
-	sta $4d
+	adc score_for_eat_egg_high
+	sta score_for_eat_egg_high
 	dex
-	bpl @LAD13
-	cld
+	bpl .increase_eat_egg_score_by_150_per_level_loop
+	cld  ;clear decimal
 	rts
+
+;-----------------------------------------------------------------------------------
 
 LAD25
     ldx #5
@@ -2156,7 +2197,10 @@ LAD9D
 @LADB6
     rts
 
+;-----------------------------------------------------------------------------------
+
 handle_player_and_enemy_snake_interactions
+
     ldx #11
 	lda #0
 @LADBB
@@ -2301,7 +2345,7 @@ handle_player_and_enemy_snake_interactions
 	sty $2e,x
 	sta $4f
 @LAEA1
-    lda $4a
+    lda score_for_eat_snake_head
 	clc
 	jsr update_player_score
 	dec $4f
@@ -2309,7 +2353,7 @@ handle_player_and_enemy_snake_interactions
 	jsr plot_player_score_on_screen
 	jsr LAD25
 	jsr LB05E
-	jsr LB7B1
+	jsr prepare_eat_frog_egg_snake_head_sound
 @LAEB7
     inc $4e
 	lda $1e
@@ -2325,14 +2369,15 @@ handle_player_and_enemy_snake_interactions
 	beq @LAEEC
 	lda #3
 	sta $2e,x
-	lda $4b
+	lda score_for_eat_snake_body
 	clc
 	jsr update_player_score
 	jsr plot_player_score_on_screen
 	jsr LB05E
-	ldx #<data_sound_clip_8
-	ldy #>data_sound_clip_8
+	ldx #<data_eat_snake_body_1_sound_clip
+	ldy #>data_eat_snake_body_1_sound_clip
 	jsr prepare_sound_data
+
 	jsr LAD7E
 	ldx $4e
 	bcs @LAEEC
@@ -2345,9 +2390,10 @@ handle_player_and_enemy_snake_interactions
 	beq @LAEB7
 	lda #5
 	sta $31,x
-	ldx #<data_sound_clip_9
-	ldy #>data_sound_clip_9
+	ldx #<data_eat_snake_body_2_sound_clip
+	ldy #>data_eat_snake_body_2_sound_clip
 	jsr prepare_sound_data
+
 	ldx #0
 	lda $2d
 	cmp #2
@@ -2631,6 +2677,8 @@ clear_25_2d_2b
 	sta $2b
 	rts
 
+;-----------------------------------------------------------------------------------
+
 LB024
     lda #1
 	lsr $9124  ;Timer least significant byte (LSB) of count
@@ -2680,7 +2728,10 @@ LB05E
 @LB06E
     rts
 
-LB06F
+;-----------------------------------------------------------------------------------
+
+handle_snake_eggs
+
     ldy $25
 	bne @LB0A6
 	ldx #2
@@ -2804,12 +2855,12 @@ LB06F
 	sta $0f
 	jsr LA972
 	jsr LAD25
-	lda $4c
-	jsr update_player_score_large_amount
-	lda $4d
+	lda score_for_eat_egg_low
+	jsr update_player_score_low_amount
+	lda score_for_eat_egg_high
 	jsr update_player_score
 	jsr plot_player_score_on_screen
-	jsr LB7B1
+	jsr prepare_eat_frog_egg_snake_head_sound
 	jmp @LB185
 
 @LB158
@@ -2876,7 +2927,7 @@ LB06F
 	sta $2b
 	sta $2d
 	jsr LA972
-	jsr LB7B1
+	jsr prepare_eat_frog_egg_snake_head_sound
 	lda $1e
 	clc
 	adc #5
@@ -3052,6 +3103,7 @@ DATA_LB2A0
 ;-----------------------------------------------------------------------------------
 
 clear_frog_on_screen
+
     lda #%10000000  ;128
 	sta frog_display
 LB2AB
@@ -3085,7 +3137,10 @@ LB2B5
     lda #3
 	rts
 
+;-----------------------------------------------------------------------------------
+
 plot_frog_on_screen
+
     bit frog_display
 	bpl @LB2DD
 	jmp @LB358
@@ -3115,7 +3170,7 @@ plot_frog_on_screen
 	ldx $1e
 	cpx #6
 	bne @LB30F
-	lda #5
+	lda #5  ;represents 500 points for eating a frog
 	clc
 	jsr update_player_score
 	jsr plot_player_score_on_screen
@@ -3136,7 +3191,7 @@ plot_frog_on_screen
 @LB320
     jsr LAD27
 	jsr LB42B
-	jsr LB7B1
+	jsr prepare_eat_frog_egg_snake_head_sound
 	jmp clear_frog_on_screen
 
 @LB32C
@@ -3174,6 +3229,7 @@ plot_frog_on_screen
     ldx #<data_frog_ribbit_sound_clip
 	ldy #>data_frog_ribbit_sound_clip
 	jsr prepare_sound_data
+
 	jsr LB2AB
 	bit frog_display
 	bpl @LB3B1
@@ -3387,6 +3443,7 @@ initialise_9000_series_data
 ;-----------------------------------------------------------------------------------
 
 draw_maze_and_set_enemy_snake_start_position
+
     jsr initialise_zero_page
 	jsr draw_maze
 	jmp set_enemy_snake_start_position
@@ -3712,27 +3769,29 @@ data_start_maze_sound_clip
 	!byte <data_start_maze_sound_clip_extra
 	!byte >data_start_maze_sound_clip_extra
 	!byte $ff
-data_sound_clip_8_extra
+data_eat_snake_body_1_sound_clip_extra
 	!byte $01, $dc, $01, $00, $01, $b4, $ff
-data_sound_clip_8
+data_eat_snake_body_1_sound_clip
 	!byte $02
-	!byte <data_sound_clip_8_extra
-	!byte >data_sound_clip_8_extra
+	!byte <data_eat_snake_body_1_sound_clip_extra
+	!byte >data_eat_snake_body_1_sound_clip_extra
 	!byte $ff
-data_sound_clip_9_extra
+data_eat_snake_body_2_sound_clip_extra
 	!byte $01, $b4, $01, $dc, $ff
-data_sound_clip_9
+data_eat_snake_body_2_sound_clip
 	!byte $02
-	!byte <data_sound_clip_9_extra
-	!byte >data_sound_clip_9_extra
+	!byte <data_eat_snake_body_2_sound_clip_extra
+	!byte >data_eat_snake_body_2_sound_clip_extra
 	!byte $ff
 
 ;-----------------------------------------------------------------------------------
 
 play_about_to_start_maze_tune
+
     ldx #<data_start_maze_sound_clip
-	ldy #>data_start_maze_sound_clip
+    ldy #>data_start_maze_sound_clip
 	jsr prepare_sound_data
+
 	lda #117
 	sta sound_loop_counter
 .start_maze_sound_loop
@@ -3745,7 +3804,8 @@ play_about_to_start_maze_tune
 
 ;-----------------------------------------------------------------------------------
 
-LB7B1
+prepare_eat_frog_egg_snake_head_sound
+
     ldx #<data_eat_frog_egg_enemy_head_sound_clip
 	ldy #>data_eat_frog_egg_enemy_head_sound_clip
 	jmp prepare_sound_data
@@ -3763,6 +3823,7 @@ data_snake_hissing_sound_clip
 ;-----------------------------------------------------------------------------------
 
 play_snake_hissing_sound
+
     dec sound_hiss_counter
 	bne .skip_snake_hissing_sound
 prepare_snake_hissing_sound
@@ -3773,21 +3834,24 @@ prepare_snake_hissing_sound
 	ldx #<data_snake_hissing_sound_clip
 	ldy #>data_snake_hissing_sound_clip
 	jmp prepare_sound_data
+
 .skip_snake_hissing_sound
     rts
 
 ;-----------------------------------------------------------------------------------
 
 handle_player_dies
+
     jsr clear_all_sound_channels
 	ldx #<data_player_dies_sound_clip
 	ldy #>data_player_dies_sound_clip
 	jsr prepare_sound_data
+
 	ldx #0
 	stx $1e
 	lda #63
 	sta sound_loop_counter
-@LB7E8
+.disintegrate_player_snake_loop
     jsr play_sounds
 	lda sound_loop_counter
 	lsr
@@ -3806,14 +3870,16 @@ handle_player_dies
 	adc #7
 	jsr LA91C
 	dec sound_loop_counter
-	bne @LB7E8
+	bne .disintegrate_player_snake_loop
+
 LB80C
     jsr LBA41
+
 	lda $2d
 	cmp #3
-	bne @LB818
-	jsr LB8CD
-@LB818
+	bne .skip_baby_snake
+	jsr handle_baby_snake
+.skip_baby_snake
     jsr update_player_loses_life
 	bcs end_of_game
 
@@ -3864,6 +3930,7 @@ end_of_game
     ldx #<data_main_theme_tune_sound_clip
 	ldy #>data_main_theme_tune_sound_clip
 	jsr prepare_sound_data
+
 	lda #128
 	sta sound_loop_counter
 .play_main_tune_and_wait_restart_loop
@@ -3900,11 +3967,13 @@ data_last_post_end_sound_clip
 
 ;-----------------------------------------------------------------------------------
 
-LB8CD
+handle_baby_snake
+
     jsr clear_all_sound_channels
-	ldx #<data_baby_snake_sound_clip
-	ldy #>data_baby_snake_sound_clip
+	ldx #<data_baby_snake_1_sound_clip
+	ldy #>data_baby_snake_1_sound_clip
 	jsr prepare_sound_data
+
 	jsr LB22D
 
 	ldx #4
@@ -3937,8 +4006,8 @@ LB8CD
 
 LB90C
     jsr clear_all_sound_channels
-	ldx #<data_clear_all_sound_channels2
-	ldy #>data_clear_all_sound_channels2
+	ldx #<data_baby_snake_2_sound_clip
+	ldy #>data_baby_snake_2_sound_clip
 	jsr prepare_sound_data
 LB916
     lda #166
@@ -4003,7 +4072,7 @@ LB916
 
 @LB989
     clc
-	jsr LA904
+	jsr open_snake_entrance_door
 	lda #2
 	sta $82
 	lda #255
@@ -4022,7 +4091,7 @@ LB916
 	cpx #166
 	bne @LB99C
 	sec
-	jsr LA904
+	jsr open_snake_entrance_door
 	jmp clear_all_sound_channels
 
 @LB9B7
@@ -4107,7 +4176,7 @@ LBA09
 	lda $2d
 	cmp #3
 	bne .goto_play_one_life
-	jsr LB8CD
+	jsr handle_baby_snake
 .goto_play_one_life
     jmp play_one_life
 
@@ -4149,1249 +4218,125 @@ LBA41
 
 ;-----------------------------------------------------------------------------------
 
-data_clear_all_sound_channels2_extra
+data_baby_snake_2_sound_clip_extra
 	!byte $06, $cd, $06, $c3, $18, $00, $06, $c3
 	!byte $06, $c8, $06, $cd, $08, $e1, $04, $00
 	!byte $08, $e1, $04, $00, $18, $da, $06, $00
 	!byte $06, $cd, $06, $c3, $18, $00, $06, $c3
 	!byte $06, $c8, $06, $c3, $08, $cd, $04, $00
 	!byte $08, $cd, $04, $00, $18, $c7, $ff
-data_baby_snake_sound_clip_extra
+data_baby_snake_1_sound_clip_extra
 	!byte $06, $c7, $06, $bc, $18, $00, $06, $bc
 	!byte $06, $c4, $06, $c8, $06, $ce, $06, $c4
 	!byte $18, $00, $06, $c4, $06, $ca, $06, $c4
 	!byte $06, $bc, $06, $cd, $06, $00, $06, $c4
 	!byte $06, $ca, $06, $bc, $06, $00, $06, $d2
 	!byte $18, $cd, $ff
-data_clear_all_sound_channels2
+data_baby_snake_2_sound_clip
 	!byte $02
-	!byte <data_clear_all_sound_channels2_extra
-	!byte >data_clear_all_sound_channels2_extra
+	!byte <data_baby_snake_2_sound_clip_extra
+	!byte >data_baby_snake_2_sound_clip_extra
 	!byte $03
-	!byte <data_clear_all_sound_channels2_extra
-	!byte >data_clear_all_sound_channels2_extra
+	!byte <data_baby_snake_2_sound_clip_extra
+	!byte >data_baby_snake_2_sound_clip_extra
 	!byte $ff
-data_baby_snake_sound_clip
+data_baby_snake_1_sound_clip
 	!byte $02
-	!byte <data_baby_snake_sound_clip_extra
-	!byte >data_baby_snake_sound_clip_extra
+	!byte <data_baby_snake_1_sound_clip_extra
+	!byte >data_baby_snake_1_sound_clip_extra
 	!byte $03
-	!byte <data_baby_snake_sound_clip_extra
-	!byte >data_baby_snake_sound_clip_extra
+	!byte <data_baby_snake_1_sound_clip_extra
+	!byte >data_baby_snake_1_sound_clip_extra
 	!byte $ff
 
-data_unknown_main
-	!byte $10
-	!byte $01
-	!byte $15
-	!byte $0c
-	!byte $20
-	!byte $1a
-	!byte $15
-	!byte $1a
-	!byte $05
-	!byte $0c
-	!byte $0f
-	!byte $c0
-	!byte $78
-	!byte $a9
-	!byte $02
-	!byte $8d
-	!byte $1e
-	!byte $91
-	!byte $20
-	!byte $83
-	!byte $b4
-	!byte $20
-	!byte $9d
-	!byte $a1
-	!byte $a9
-	!byte $00
-	!byte $85
-	!byte $00
-	!byte $a9
-	!byte $10
-	!byte $85
-	!byte $01
-	!byte $a2
-	!byte $10
-	!byte $a0
-	!byte $00
-	!byte $a9
-	!byte $ff
-	!byte $91
-	!byte $00
-	!byte $c8
-	!byte $d0
-	!byte $fb
-	!byte $e6
-	!byte $01
-	!byte $ca
-	!byte $d0
-	!byte $f6
-	!byte $a0
-	!byte $f2
-	!byte $a9
-	!byte $05
-	!byte $99
-	!byte $ff
-	!byte $95
-	!byte $88
-	!byte $d0
-	!byte $fa
-	!byte $a2
-	!byte $00
-	!byte $bd
-	!byte $e3
-	!byte $ba
-	!byte $18
-	!byte $69
-	!byte $40
-	!byte $9d
-	!byte $00
-	!byte $01
-	!byte $e8
-	!byte $e0
-	!byte $0c
-	!byte $90
-	!byte $f2
-	!byte $a9
-	!byte $01
-	!byte $85
-	!byte $5e
-	!byte $a9
-	!byte $00
-	!byte $85
-	!byte $5d
-	!byte $85
-	!byte $1f
-	!byte $aa
-	!byte $0a
-	!byte $a8
-	!byte $20
-	!byte $38
-	!byte $a9
-	!byte $a5
-	!byte $1f
-	!byte $18
-	!byte $69
-	!byte $04
-	!byte $85
-	!byte $1f
-	!byte $c9
-	!byte $55
-	!byte $90
-	!byte $ef
-	!byte $02
-	!byte $30
-	!byte $00
-	!byte $00
-	!byte $81
-	!byte $c3
-	!byte $3c
-	!byte $24
-	!byte $24
-	!byte $3c
-	!byte $24
-	!byte $24
-	!byte $18
-	!byte $02
-	!byte $7c
-	!byte $58
-	!byte $1c
-	!byte $74
-	!byte $44
-	!byte $06
-	!byte $18
-	!byte $01
-	!byte $7e
-	!byte $d8
-	!byte $18
-	!byte $38
-	!byte $28
-	!byte $0c
-	!byte $18
-	!byte $40
-	!byte $3e
-	!byte $1a
-	!byte $38
-	!byte $2e
-	!byte $22
-	!byte $60
-	!byte $18
-	!byte $80
-	!byte $7e
-	!byte $1b
-	!byte $18
-	!byte $1c
-	!byte $14
-	!byte $30
-	!byte $98
-	!byte $40
-	!byte $7c
-	!byte $1c
-	!byte $1c
-	!byte $18
-	!byte $18
-	!byte $3c
-	!byte $18
-	!byte $00
-	!byte $7c
-	!byte $9c
-	!byte $1c
-	!byte $18
-	!byte $18
-	!byte $3c
-	!byte $00
-	!byte $07
-	!byte $0f
-	!byte $0f
-	!byte $07
-	!byte $00
-	!byte $3f
-	!byte $7f
-	!byte $80
-	!byte $3f
-	!byte $75
-	!byte $c9
-	!byte $ca
-	!byte $72
-	!byte $2b
-	!byte $1f
-	!byte $e0
-	!byte $fe
-	!byte $ff
-	!byte $ff
-	!byte $fe
-	!byte $fc
-	!byte $ff
-	!byte $ff
-	!byte $00
-	!byte $ff
-	!byte $5d
-	!byte $92
-	!byte $52
-	!byte $4c
-	!byte $aa
-	!byte $ff
-	!byte $00
-	!byte $0e
-	!byte $fb
-	!byte $fb
-	!byte $0e
-	!byte $00
-	!byte $fc
-	!byte $fe
-	!byte $01
-	!byte $fc
-	!byte $77
-	!byte $4b
-	!byte $4a
-	!byte $34
-	!byte $a8
-	!byte $f0
-	!byte $00
-	!byte $00
-	!byte $01
-	!byte $01
-	!byte $00
-	!byte $00
-	!byte $3f
-	!byte $7f
-	!byte $80
-	!byte $3f
-	!byte $75
-	!byte $c9
-	!byte $ca
-	!byte $72
-	!byte $2b
-	!byte $1f
-	!byte $3c
-	!byte $ff
-	!byte $ff
-	!byte $ff
-	!byte $ff
-	!byte $7e
-	!byte $ff
-	!byte $ff
-	!byte $00
-	!byte $ff
-	!byte $5d
-	!byte $92
-	!byte $52
-	!byte $4c
-	!byte $aa
-	!byte $ff
-	!byte $00
-	!byte $00
-	!byte $80
-	!byte $80
-	!byte $00
-	!byte $00
-	!byte $fc
-	!byte $fe
-	!byte $01
-	!byte $fc
-	!byte $77
-	!byte $4b
-	!byte $4a
-	!byte $34
-	!byte $a8
-	!byte $f0
-	!byte $00
-	!byte $70
-	!byte $df
-	!byte $df
-	!byte $70
-	!byte $00
-	!byte $3f
-	!byte $7f
-	!byte $80
-	!byte $3f
-	!byte $75
-	!byte $c9
-	!byte $ca
-	!byte $72
-	!byte $2b
-	!byte $1f
-	!byte $07
-	!byte $7f
-	!byte $ff
-	!byte $ff
-	!byte $7f
-	!byte $3f
-	!byte $ff
-	!byte $ff
-	!byte $00
-	!byte $ff
-	!byte $5d
-	!byte $92
-	!byte $52
-	!byte $4c
-	!byte $aa
-	!byte $ff
-	!byte $00
-	!byte $e0
-	!byte $f0
-	!byte $f0
-	!byte $e0
-	!byte $00
-	!byte $fc
-	!byte $fe
-	!byte $01
-	!byte $fc
-	!byte $77
-	!byte $4b
-	!byte $4a
-	!byte $34
-	!byte $a8
-	!byte $f0
-	!byte $07
-	!byte $1f
-	!byte $7f
-	!byte $78
-	!byte $f0
-	!byte $e0
-	!byte $e0
-	!byte $e0
-	!byte $f0
-	!byte $78
-	!byte $7f
-	!byte $1f
-	!byte $07
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $e0
-	!byte $f0
-	!byte $78
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $78
-	!byte $f0
-	!byte $e0
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $c0
-	!byte $c0
-	!byte $c0
-	!byte $c0
-	!byte $f8
-	!byte $fc
-	!byte $cc
-	!byte $cc
-	!byte $cc
-	!byte $cc
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $3c
-	!byte $7e
-	!byte $e7
-	!byte $c3
-	!byte $e7
-	!byte $7e
-	!byte $3c
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $37
-	!byte $3f
-	!byte $39
-	!byte $30
-	!byte $39
-	!byte $3f
-	!byte $3f
-	!byte $30
-	!byte $30
-	!byte $30
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $0e
-	!byte $06
-	!byte $06
-	!byte $06
-	!byte $86
-	!byte $c6
-	!byte $c6
-	!byte $c6
-	!byte $86
-	!byte $0f
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $18
-	!byte $00
-	!byte $38
-	!byte $18
-	!byte $18
-	!byte $18
-	!byte $18
-	!byte $18
-	!byte $3c
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $1c
-	!byte $36
-	!byte $30
-	!byte $30
-	!byte $fc
-	!byte $30
-	!byte $30
-	!byte $30
-	!byte $30
-	!byte $30
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $30
-	!byte $30
-	!byte $30
-	!byte $fc
-	!byte $30
-	!byte $30
-	!byte $30
-	!byte $36
-	!byte $1c
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $3c
-	!byte $7e
-	!byte $e7
-	!byte $ff
-	!byte $e0
-	!byte $7e
-	!byte $3c
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $37
-	!byte $3d
-	!byte $38
-	!byte $30
-	!byte $30
-	!byte $30
-	!byte $30
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $80
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $07
-	!byte $18
-	!byte $20
-	!byte $47
-	!byte $4e
-	!byte $8c
-	!byte $98
-	!byte $90
-	!byte $80
-	!byte $80
-	!byte $80
-	!byte $40
-	!byte $40
-	!byte $20
-	!byte $18
-	!byte $07
-	!byte $e0
-	!byte $18
-	!byte $04
-	!byte $02
-	!byte $02
-	!byte $01
-	!byte $01
-	!byte $01
-	!byte $01
-	!byte $01
-	!byte $01
-	!byte $02
-	!byte $02
-	!byte $04
-	!byte $18
-	!byte $e0
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $7f
-	!byte $5f
-	!byte $6f
-	!byte $77
-	!byte $58
-	!byte $4b
-	!byte $6b
-	!byte $3b
-	!byte $1b
-	!byte $0b
-	!byte $07
-	!byte $1c
-	!byte $1f
-	!byte $10
-	!byte $18
-	!byte $17
-	!byte $ef
-	!byte $ef
-	!byte $ff
-	!byte $ff
-	!byte $00
-	!byte $ff
-	!byte $c1
-	!byte $d5
-	!byte $d5
-	!byte $c1
-	!byte $ff
-	!byte $00
-	!byte $00
-	!byte $c0
-	!byte $40
-	!byte $40
-	!byte $f0
-	!byte $f8
-	!byte $fc
-	!byte $fe
-	!byte $01
-	!byte $ff
-	!byte $c7
-	!byte $c7
-	!byte $ff
-	!byte $ff
-	!byte $ff
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $01
-	!byte $42
-	!byte $3c
-	!byte $3e
-	!byte $7e
-	!byte $3e
-	!byte $1c
-	!byte $24
-	!byte $04
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $81
-	!byte $42
-	!byte $3c
-	!byte $3e
-	!byte $ff
-	!byte $7f
-	!byte $3e
-	!byte $24
-	!byte $44
-	!byte $04
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $80
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $02
-	!byte $01
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $07
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $81
-	!byte $42
-	!byte $3c
-	!byte $3e
-	!byte $ff
-	!byte $7f
-	!byte $3f
-	!byte $18
-	!byte $44
-	!byte $84
-	!byte $06
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $40
-	!byte $80
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $80
-	!byte $e0
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $08
-	!byte $06
-	!byte $01
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $07
-	!byte $18
-	!byte $01
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $01
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $89
-	!byte $48
-	!byte $3c
-	!byte $32
-	!byte $eb
-	!byte $6f
-	!byte $7f
-	!byte $1c
-	!byte $00
-	!byte $84
-	!byte $04
-	!byte $02
-	!byte $00
-	!byte $00
-	!byte $20
-	!byte $40
-	!byte $00
-	!byte $00
-	!byte $40
-	!byte $00
-	!byte $f0
-	!byte $00
-	!byte $00
-	!byte $80
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $10
-	!byte $0c
-	!byte $02
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $0e
-	!byte $30
-	!byte $40
-	!byte $06
-	!byte $00
-	!byte $00
-	!byte $03
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $08
-	!byte $88
-	!byte $00
-	!byte $3c
-	!byte $32
-	!byte $e1
-	!byte $6d
-	!byte $6f
-	!byte $3e
-	!byte $1c
-	!byte $80
-	!byte $02
-	!byte $01
-	!byte $00
-	!byte $18
-	!byte $20
-	!byte $00
-	!byte $00
-	!byte $20
-	!byte $40
-	!byte $00
-	!byte $f8
-	!byte $04
-	!byte $00
-	!byte $10
-	!byte $40
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $10
-	!byte $08
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $18
-	!byte $40
-	!byte $80
-	!byte $04
-	!byte $08
-	!byte $00
-	!byte $06
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $08
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $14
-	!byte $32
-	!byte $e1
-	!byte $0d
-	!byte $2b
-	!byte $2c
-	!byte $1c
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $01
-	!byte $08
-	!byte $00
-	!byte $00
-	!byte $10
-	!byte $20
-	!byte $00
-	!byte $00
-	!byte $3c
-	!byte $00
-	!byte $00
-	!byte $08
-	!byte $00
-	!byte $20
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $30
-	!byte $18
-	!byte $04
-	!byte $03
-	!byte $06
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $04
-	!byte $fe
-	!byte $38
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $20
-	!byte $30
-	!byte $fe
-	!byte $18
-	!byte $06
-	!byte $00
-	!byte $00
-	!byte $44
-	!byte $38
-	!byte $08
-	!byte $04
-	!byte $0c
-	!byte $00
-	!byte $00
-	!byte $1f
-	!byte $1f
-	!byte $3f
-	!byte $3f
-	!byte $7f
-	!byte $7f
-	!byte $ff
-	!byte $ff
-	!byte $f8
-	!byte $f8
-	!byte $fc
-	!byte $fc
-	!byte $fe
-	!byte $fe
-	!byte $ff
-	!byte $ff
-	!byte $a9
-	!byte $00
-	!byte $85
-	!byte $06
-	!byte $20
-	!byte $ee
-	!byte $ab
-	!byte $20
-	!byte $21
-	!byte $af
-	!byte $a9
-	!byte $00
-	!byte $85
-	!byte $09
-	!byte $85
-	!byte $14
-	!byte $85
-	!byte $0d
-	!byte $85
-	!byte $0f
-	!byte $a9
-	!byte $50
-	!byte $85
-	!byte $2a
-	!byte $a9
-	!byte $75
-	!byte $85
-	!byte $2b
-	!byte $20
-	!byte $68
-	!byte $bf
-	!byte $a9
-	!byte $04
-	!byte $85
-	!byte $29
-	!byte $a9
-	!byte $80
-	!byte $85
-	!byte $68
-	!byte $a9
-	!byte $7d
-	!byte $85
-	!byte $5b
-	!byte $a9
-	!byte $be
-	!byte $85
-	!byte $67
-	!byte $85
-	!byte $5a
-	!byte $a9
-	!byte $7c
-	!byte $85
-	!byte $11
-	!byte $85
-	!byte $12
-	!byte $85
-	!byte $13
-	!byte $a9
-	!byte $80
-	!byte $85
-	!byte $15
-	!byte $a9
-	!byte $ff
-	!byte $85
-	!byte $16
-	!byte $a9
-	!byte $7e
-	!byte $85
-	!byte $0c
-	!byte $a2
-	!byte $03
-	!byte $a9
-	!byte $7e
-	!byte $95
-	!byte $63
-	!byte $bd
-	!byte $05
-	!byte $b5
-	!byte $95
-	!byte $5f
-	!byte $ca
-	!byte $10
-	!byte $f4
-	!byte $a9
-	!byte $7f
-	!byte $85
-	!byte $63
-	!byte $a9
-	!byte $00
-	!byte $85
-	!byte $34
-	!byte $85
-	!byte $69
-	!byte $85
-	!byte $31
-	!byte $a2
-	!byte $09
-	!byte $95
-	!byte $b8
-	!byte $ca
-	!byte $10
-	!byte $fb
-	!byte $a2
-	!byte $0f
-	!byte $a9
-	!byte $7e
-	!byte $95
-	!byte $7a
-	!byte $ca
-	!byte $10
-	!byte $f9
-	!byte $a9
-	!byte $00
-	!byte $a2
-	!byte $06
-	!byte $95
-	!byte $17
-	!byte $ca
-	!byte $10
-	!byte $fb
-	!byte $a2
-	!byte $09
-	!byte $95
-	!byte $c2
-	!byte $ca
-	!byte $10
-	!byte $fb
-	!byte $a2
-	!byte $0f
-	!byte $20
-	!byte $56
-	!byte $b3
-	!byte $c9
-	!byte $7d
-	!byte $b0
-	!byte $f9
-	!byte $c9
-	!byte $10
-	!byte $90
-	!byte $f5
-	!byte $95
-	!byte $4a
-	!byte $20
-	!byte $56
-	!byte $b3
-	!byte $95
-	!byte $3a
-	!byte $ca
-	!byte $10
-	!byte $eb
-	!byte $a9
-	!byte $01
-	!byte $85
-	!byte $06
-	!byte $20
-	!byte $ee
-	!byte $ab
-	!byte $20
-	!byte $28
-	!byte $a5
-	!byte $20
-	!byte $b0
-	!byte $a6
-	!byte $20
-	!byte $93
-	!byte $a2
-	!byte $20
-	!byte $e6
-	!byte $a1
-	!byte $20
-	!byte $47
-	!byte $aa
-	!byte $20
-	!byte $94
-	!byte $a7
-	!byte $20
-	!byte $3e
-	!byte $a8
-	!byte $20
-	!byte $99
-	!byte $ab
-	!byte $20
-	!byte $a4
-	!byte $ac
-	!byte $20
-	!byte $a7
-	!byte $ad
-	!byte $20
-	!byte $19
-	!byte $ae
-	!byte $20
-	!byte $cb
-	!byte $a3
-	!byte $20
-	!byte $d7
-	!byte $a2
-	!byte $20
-	!byte $a4
-	!byte $aa
-	!byte $20
-	!byte $29
-	!byte $ac
-	!byte $20
-	!byte $e2
-	!byte $a8
-	!byte $20
-	!byte $80
-	!byte $a8
-	!byte $20
-	!byte $82
-	!byte $a3
-	!byte $20
-	!byte $d5
-	!byte $a4
-	!byte $20
-	!byte $5c
-	!byte $b0
-	!byte $20
-	!byte $3d
-	!byte $b0
-	!byte $20
-	!byte $72
-	!byte $bf
-	!byte $e6
-	!byte $28
-	!byte $4c
-	!byte $21
-	!byte $bf
-	!byte $a9
-	!byte $00
-	!byte $85
-	!byte $37
-	!byte $85
-	!byte $33
-	!byte $85
-	!byte $5c
-	!byte $60
-	!byte $02
-	!byte $ad
-	!byte $71
-	!byte $6f
-	!byte $a0
-	!byte $00
-	!byte $99
-	!byte $21
-	!byte $6f
-	!byte $60
-	!pet "oppe"
-	!byte $61
-	!pet "As01, files scratched,01,00"
-	!byte $00
-	!pet "cserpentine $6",$0d
-	!byte $00
-	!byte $43
-	!byte $33
-	!byte $50
-	!byte $62
-	!byte $6d
-	!pet "clear "
-	!byte $62
-	!byte $73
-	!pet "wha   "
-	!byte $62
-	!byte $7b
-	!pet "cleap "
-	!byte $62
-	!byte $7f
-	!pet "plotch"
-	!byte $62
-	!byte $8e
-	!pet "pbp   "
-	!byte $62
-	!pet $99,"shifp "
-	!byte $62
-	!byte $a3
-	!pet "dshift"
-	!byte $62
-	!byte $a9
-	!pet "leshif"
-	!byte $62
-	!pet "Hpbpl  "
-	!byte $62
-	!pet "Jshif  "
-	!byte $00
+;-----------------------------------------------------------------------------------
+; Junk bytes needed to pad file to 8192 bytes for A000 cartridge format
+; These bytes could be replaced with !fill 1309,0 but are kept to allow
+; a matching binary comparison with the original program
+data_junk_padding_bytes
+
+    !byte $10, $01, $15, $0c, $20, $1a, $15, $1a, $05, $0c, $0f, $c0, $78, $a9, $02, $8d
+    !byte $1e, $91, $20, $83, $b4, $20, $9d, $a1, $a9, $00, $85, $00, $a9, $10, $85, $01
+    !byte $a2, $10, $a0, $00, $a9, $ff, $91, $00, $c8, $d0, $fb, $e6, $01, $ca, $d0, $f6
+    !byte $a0, $f2, $a9, $05, $99, $ff, $95, $88, $d0, $fa, $a2, $00, $bd, $e3, $ba, $18
+    !byte $69, $40, $9d, $00, $01, $e8, $e0, $0c, $90, $f2, $a9, $01, $85, $5e, $a9, $00
+    !byte $85, $5d, $85, $1f, $aa, $0a, $a8, $20, $38, $a9, $a5, $1f, $18, $69, $04, $85
+    !byte $1f, $c9, $55, $90, $ef, $02, $30, $00, $00, $81, $c3, $3c, $24, $24, $3c, $24
+    !byte $24, $18, $02, $7c, $58, $1c, $74, $44, $06, $18, $01, $7e, $d8, $18, $38, $28
+    !byte $0c, $18, $40, $3e, $1a, $38, $2e, $22, $60, $18, $80, $7e, $1b, $18, $1c, $14
+    !byte $30, $98, $40, $7c, $1c, $1c, $18, $18, $3c, $18, $00, $7c, $9c, $1c, $18, $18
+    !byte $3c, $00, $07, $0f, $0f, $07, $00, $3f, $7f, $80, $3f, $75, $c9, $ca, $72, $2b
+    !byte $1f, $e0, $fe, $ff, $ff, $fe, $fc, $ff, $ff, $00, $ff, $5d, $92, $52, $4c, $aa
+    !byte $ff, $00, $0e, $fb, $fb, $0e, $00, $fc, $fe, $01, $fc, $77, $4b, $4a, $34, $a8
+    !byte $f0, $00, $00, $01, $01, $00, $00, $3f, $7f, $80, $3f, $75, $c9, $ca, $72, $2b
+    !byte $1f, $3c, $ff, $ff, $ff, $ff, $7e, $ff, $ff, $00, $ff, $5d, $92, $52, $4c, $aa
+    !byte $ff, $00, $00, $80, $80, $00, $00, $fc, $fe, $01, $fc, $77, $4b, $4a, $34, $a8
+    !byte $f0, $00, $70, $df, $df, $70, $00, $3f, $7f, $80, $3f, $75, $c9, $ca, $72, $2b
+    !byte $1f, $07, $7f, $ff, $ff, $7f, $3f, $ff, $ff, $00, $ff, $5d, $92, $52, $4c, $aa
+    !byte $ff, $00, $e0, $f0, $f0, $e0, $00, $fc, $fe, $01, $fc, $77, $4b, $4a, $34, $a8
+    !byte $f0, $07, $1f, $7f, $78, $f0, $e0, $e0, $e0, $f0, $78, $7f, $1f, $07, $00, $00
+    !byte $00, $00, $e0, $f0, $78, $00, $00, $00, $00, $00, $78, $f0, $e0, $00, $00, $00
+    !byte $00, $00, $00, $00, $c0, $c0, $c0, $c0, $f8, $fc, $cc, $cc, $cc, $cc, $00, $00
+    !byte $00, $00, $00, $00, $00, $00, $00, $3c, $7e, $e7, $c3, $e7, $7e, $3c, $00, $00
+    !byte $00, $00, $00, $00, $00, $00, $00, $37, $3f, $39, $30, $39, $3f, $3f, $30, $30
+    !byte $30, $00, $00, $00, $0e, $06, $06, $06, $86, $c6, $c6, $c6, $86, $0f, $00, $00
+    !byte $00, $00, $00, $00, $00, $18, $00, $38, $18, $18, $18, $18, $18, $3c, $00, $00
+    !byte $00, $00, $00, $00, $1c, $36, $30, $30, $fc, $30, $30, $30, $30, $30, $00, $00
+    !byte $00, $00, $00, $00, $00, $30, $30, $30, $fc, $30, $30, $30, $36, $1c, $00, $00
+    !byte $00, $00, $00, $00, $00, $00, $00, $3c, $7e, $e7, $ff, $e0, $7e, $3c, $00, $00
+    !byte $00, $00, $00, $00, $00, $00, $00, $37, $3d, $38, $30, $30, $30, $30, $00, $00
+    !byte $00, $00, $00, $00, $00, $00, $00, $00, $80, $00, $00, $00, $00, $00, $00, $00
+    !byte $00, $07, $18, $20, $47, $4e, $8c, $98, $90, $80, $80, $80, $40, $40, $20, $18
+    !byte $07, $e0, $18, $04, $02, $02, $01, $01, $01, $01, $01, $01, $02, $02, $04, $18
+    !byte $e0, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+    !byte $00, $00, $00, $00, $00, $00, $7f, $5f, $6f, $77, $58, $4b, $6b, $3b, $1b, $0b
+    !byte $07, $1c, $1f, $10, $18, $17, $ef, $ef, $ff, $ff, $00, $ff, $c1, $d5, $d5, $c1
+    !byte $ff, $00, $00, $c0, $40, $40, $f0, $f8, $fc, $fe, $01, $ff, $c7, $c7, $ff, $ff
+    !byte $ff, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+    !byte $00, $00, $00, $00, $01, $42, $3c, $3e, $7e, $3e, $1c, $24, $04, $00, $00, $00
+    !byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+    !byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+    !byte $00, $00, $00, $00, $81, $42, $3c, $3e, $ff, $7f, $3e, $24, $44, $04, $00, $00
+    !byte $00, $00, $00, $80, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+    !byte $00, $00, $02, $01, $00, $00, $00, $00, $07, $00, $00, $00, $00, $00, $00, $00
+    !byte $00, $00, $00, $00, $81, $42, $3c, $3e, $ff, $7f, $3f, $18, $44, $84, $06, $00
+    !byte $00, $00, $40, $80, $00, $00, $00, $80, $e0, $00, $00, $00, $00, $00, $00, $00
+    !byte $00, $08, $06, $01, $00, $00, $00, $00, $07, $18, $01, $00, $00, $00, $01, $00
+    !byte $00, $00, $00, $00, $89, $48, $3c, $32, $eb, $6f, $7f, $1c, $00, $84, $04, $02
+    !byte $00, $00, $20, $40, $00, $00, $40, $00, $f0, $00, $00, $80, $00, $00, $00, $00
+    !byte $00, $10, $0c, $02, $00, $00, $00, $00, $0e, $30, $40, $06, $00, $00, $03, $00
+    !byte $00, $00, $00, $08, $88, $00, $3c, $32, $e1, $6d, $6f, $3e, $1c, $80, $02, $01
+    !byte $00, $18, $20, $00, $00, $20, $40, $00, $f8, $04, $00, $10, $40, $00, $00, $00
+    !byte $00, $10, $08, $00, $00, $00, $00, $00, $18, $40, $80, $04, $08, $00, $06, $00
+    !byte $00, $00, $08, $00, $00, $00, $14, $32, $e1, $0d, $2b, $2c, $1c, $00, $00, $00
+    !byte $01, $08, $00, $00, $10, $20, $00, $00, $3c, $00, $00, $08, $00, $20, $00, $00
+    !byte $00, $30, $18, $04, $03, $06, $00, $00, $00, $00, $00, $00, $04, $fe, $38, $00
+    !byte $00, $00, $00, $20, $30, $fe, $18, $06, $00, $00, $44, $38, $08, $04, $0c, $00
+    !byte $00, $1f, $1f, $3f, $3f, $7f, $7f, $ff, $ff, $f8, $f8, $fc, $fc, $fe, $fe, $ff
+    !byte $ff, $a9, $00, $85, $06, $20, $ee, $ab, $20, $21, $af, $a9, $00, $85, $09, $85
+    !byte $14, $85, $0d, $85, $0f, $a9, $50, $85, $2a, $a9, $75, $85, $2b, $20, $68, $bf
+    !byte $a9, $04, $85, $29, $a9, $80, $85, $68, $a9, $7d, $85, $5b, $a9, $be, $85, $67
+    !byte $85, $5a, $a9, $7c, $85, $11, $85, $12, $85, $13, $a9, $80, $85, $15, $a9, $ff
+    !byte $85, $16, $a9, $7e, $85, $0c, $a2, $03, $a9, $7e, $95, $63, $bd, $05, $b5, $95
+    !byte $5f, $ca, $10, $f4, $a9, $7f, $85, $63, $a9, $00, $85, $34, $85, $69, $85, $31
+    !byte $a2, $09, $95, $b8, $ca, $10, $fb, $a2, $0f, $a9, $7e, $95, $7a, $ca, $10, $f9
+    !byte $a9, $00, $a2, $06, $95, $17, $ca, $10, $fb, $a2, $09, $95, $c2, $ca, $10, $fb
+    !byte $a2, $0f, $20, $56, $b3, $c9, $7d, $b0, $f9, $c9, $10, $90, $f5, $95, $4a, $20
+    !byte $56, $b3, $95, $3a, $ca, $10, $eb, $a9, $01, $85, $06, $20, $ee, $ab, $20, $28
+    !byte $a5, $20, $b0, $a6, $20, $93, $a2, $20, $e6, $a1, $20, $47, $aa, $20, $94, $a7
+    !byte $20, $3e, $a8, $20, $99, $ab, $20, $a4, $ac, $20, $a7, $ad, $20, $19, $ae, $20
+    !byte $cb, $a3, $20, $d7, $a2, $20, $a4, $aa, $20, $29, $ac, $20, $e2, $a8, $20, $80
+    !byte $a8, $20, $82, $a3, $20, $d5, $a4, $20, $5c, $b0, $20, $3d, $b0, $20, $72, $bf
+    !byte $e6, $28, $4c, $21, $bf, $a9, $00, $85, $37, $85, $33, $85, $5c, $60, $02, $ad
+    !byte $71, $6f, $a0, $00, $99, $21, $6f, $60, $4f, $50, $50, $45, $61, $c1, $53, $30
+    !byte $31, $2c, $20, $46, $49, $4c, $45, $53, $20, $53, $43, $52, $41, $54, $43, $48
+    !byte $45, $44, $2c, $30, $31, $2c, $30, $30, $00, $43, $53, $45, $52, $50, $45, $4e
+    !byte $54, $49, $4e, $45, $20, $24, $36, $0d, $00, $43, $33, $50, $62, $6d, $43, $4c
+    !byte $45, $41, $52, $20, $62, $73, $57, $48, $41, $20, $20, $20, $62, $7b, $43, $4c
+    !byte $45, $41, $50, $20, $62, $7f, $50, $4c, $4f, $54, $43, $48, $62, $8e, $50, $42
+    !byte $50, $20, $20, $20, $62, $99, $53, $48, $49, $46, $50, $20, $62, $a3, $44, $53
+    !byte $48, $49, $46, $54, $62, $a9, $4c, $45, $53, $48, $49, $46, $62, $c8, $50, $42
+    !byte $50, $4c, $20, $20, $62, $ca, $53, $48, $49, $46, $20, $20, $00
+
+;-----------------------------------------------------------------------------------
 end_of_program

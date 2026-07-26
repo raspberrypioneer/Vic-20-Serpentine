@@ -1,5 +1,4 @@
 @echo off
 cd .\prg
-::C:\Users\spwil\Documents\Commodore\Tools\GTK3VICE-3.3-win32-r35872\xvic.exe -model vic20pal -cartA "Serpentine.prg_acme"
 C:\Users\spwil\Documents\Commodore\Tools\GTK3VICE-3.3-win32-r35872\xvic.exe -model vic20pal -cartA "Serpentine.prg"
 cd ..
