@@ -50,11 +50,11 @@ text_pointer_high = $5e
 ;-----------------------------------------------------------------------------------
 ; start program, game was originally a cartridge so no basic loader
 * = $a000
-    ;auto start the program
-	!byte <start_of_program  ;Cold start vector (low)
-	!byte >start_of_program  ;Cold start vector (high)
-	!byte <start_of_program  ;Warm / reset start vector (low)
-	!byte >start_of_program  ;Warm / reset start vector (high)
+    ; auto start the program
+	!byte <start_of_program  ;cold start vector (low)
+	!byte >start_of_program  ;cold start vector (high)
+	!byte <start_of_program  ;warm / reset start vector (low)
+	!byte >start_of_program  ;warm / reset start vector (high)
     !pet "a0CBM"  ;start of signature a0CBM
 
 data_zero_page_80_99
@@ -121,7 +121,7 @@ data_zero_page_9e_f7
 
 start_of_program
 	sei
-	lda #2  ;Disable restore key interrupt
+	lda #2  ;disable restore key interrupt
 	sta _IRQ_ENABLE
 	jsr initialise_9000_series_and_other_data
 	lda #1
@@ -270,7 +270,7 @@ get_joystick_movement
 	cmp #JOY_FIRE
 	bne .joy_movement_in_X
 
-    ;pause game when fire is pressed
+    ; pause game when fire is pressed
 	lda _VOLUME
 	tay
 	and #%11110000
@@ -312,7 +312,7 @@ read_joystick
 	ora $12  ;add right direction, bits are not fire (16 if on), left (8 if on), down (4 if on), up (2 if on) and right (1 if on)
 	beq .read_joy_set_carry_exit
 
-    ;get a single joystick direction / fire from priority table (in case more than one at the same time e.g. up-left)
+    ; get a single joystick direction / fire from priority table (in case more than one at the same time e.g. up-left)
 	ldx #5
 .direction_loop
 	cmp direction_list-1,x
@@ -331,7 +331,7 @@ read_joystick
 set_screen_base_colours
 	ldy #242  ;11 rows x 22 columns
 
-    ;set main game screen colour
+    ; set main game screen colour
 	lda #13  ;colour green
 .set_screen_base_colour_loop
 	sta _COLOUR_SCREEN_ADDR-1,y
@@ -339,7 +339,7 @@ set_screen_base_colours
 	cpy #22
 	bne .set_screen_base_colour_loop
 
-    ;set top 2 title line colour
+    ; set top 2 title line colour
 	lda #6  ;colour blue
 .set_top_base_colour_loop
 	sta _COLOUR_SCREEN_ADDR-1,y
@@ -351,7 +351,7 @@ set_screen_base_colours
 
 initialise_0200_onwards_with_increments_of_11
 
-    ;set $0200 to $02f2 with 0, 11, 22, 33, 44 etc to 242
+    ; set $0200 to $02f2 with 0, 11, 22, 33, 44 etc to 242
 	lda #0
 	tay
 	sta $12
@@ -418,7 +418,7 @@ block_22_custom_characters
 ;-----------------------------------------------------------------------------------
 
 data_screen_bitmap_address_low
-    ;increments each byte by 176 (each character is 8 bits in a row of 22 characters)
+    ; increments each byte by 176 (each character is 8 bits in a row of 22 characters)
 	!byte $00, $b0, $60, $10, $c0, $70, $20, $d0
 	!byte $80, $30, $e0, $90, $40, $f0, $a0, $50
 	!byte $00, $b0, $60, $10, $c0, $70
@@ -452,7 +452,7 @@ LA21C
 
 ;-----------------------------------------------------------------------------------
 
-LA23A
+plot_something_on_screen
 	jsr LA21C
 	ldy #7
 @LA23F
@@ -484,7 +484,9 @@ LA23A
 	bpl @LA23F
 	rts
 
-LA266
+;-----------------------------------------------------------------------------------
+
+clear_something_on_screen
 	jsr LA21C
 	ldy #7
 @LA26B
@@ -518,6 +520,8 @@ LA266
 	dey
 	bpl @LA26B
 	rts
+
+;-----------------------------------------------------------------------------------
 
 LA297
 	ldy $06
@@ -698,7 +702,7 @@ LA38D
 	sty $0c
 @LA397
     jsr LA2F7
-	jsr LA23A
+	jsr plot_something_on_screen
 	jsr LA2A5
 LA3A0
     lda $06
@@ -707,45 +711,55 @@ LA3A0
 	sta $06
 	rts
 
-DATA_LA3A8
-    !byte <DATA_UNKNOWN_G
-	!byte <DATA_UNKNOWN_G1
-	!byte <DATA_UNKNOWN_G2
-DATA_LA3AB
-    !byte >DATA_UNKNOWN_G
-	!byte >DATA_UNKNOWN_G1
-    !byte >DATA_UNKNOWN_G2
+;-----------------------------------------------------------------------------------
+; snake head and body sprite addresses
 
-DATA_LA3AD
-	!byte <DATA_UNKNOWN_G3
-	!byte <DATA_UNKNOWN_G4
-	!byte <DATA_UNKNOWN_G5
-	!byte <DATA_UNKNOWN_G6
-	!byte <DATA_UNKNOWN_G7
-	!byte <DATA_UNKNOWN_G8
-	!byte <DATA_UNKNOWN_G9
-	!byte <DATA_UNKNOWN_G10
-	!byte <DATA_UNKNOWN_G11
-	!byte <DATA_UNKNOWN_G12
-	!byte <DATA_UNKNOWN_G13
-    !byte <DATA_UNKNOWN_G14
+data_body_sprite_addresses_low
+    !byte <player_snake_body_sprite
+	!byte <enemy_snake_body_sprite
+	!byte <enemy_snake_weak_body_sprite
 
-DATA_LA3B9
-	!fill 7, >DATA_UNKNOWN_G
-	!fill 5, 1+>DATA_UNKNOWN_G
+data_body_sprite_addresses_high
+    !byte >player_snake_body_sprite
+	!byte >enemy_snake_body_sprite
+    !byte >enemy_snake_weak_body_sprite
+
+data_head_sprite_addresses_low
+	!byte <player_snake_head_up_sprite
+	!byte <player_snake_head_down_sprite
+	!byte <player_snake_head_right_sprite
+	!byte <player_snake_head_left_sprite
+	!byte <enemy_snake_head_up_sprite
+	!byte <enemy_snake_head_down_sprite
+	!byte <enemy_snake_head_right_sprite
+	!byte <enemy_snake_head_left_sprite
+	!byte <enemy_snake_weak_head_up_sprite
+	!byte <enemy_snake_weak_head_down_sprite
+	!byte <enemy_snake_weak_head_right_sprite
+    !byte <enemy_snake_weak_head_left_sprite
+
+data_head_sprite_addresses_high
+	!fill 7, >player_snake_head_up_sprite
+	!fill 5, >enemy_snake_head_left_sprite
+
+;-----------------------------------------------------------------------------------
 
 DATA_LA3C5
 	!byte 3, 3, 1, 1
 DATA_LA3C9
 	!byte 4, 4, 2, 2
 
+;-----------------------------------------------------------------------------------
+
 LA3CE
     ldx $08
-	lda DATA_LA3A8,x
+	lda data_body_sprite_addresses_low,x
 	sta $10
-	lda DATA_LA3AB,x
+	lda data_body_sprite_addresses_high,x
 	sta $11
 	rts
+
+;-----------------------------------------------------------------------------------
 
 LA3DB
     lda $08
@@ -753,9 +767,9 @@ LA3DB
 	asl
 	adc $0d
 	tax
-	lda DATA_LA3AD-1,x
+	lda data_head_sprite_addresses_low-1,x
 	sta $10
-	lda DATA_LA3B9-1,x
+	lda data_head_sprite_addresses_high-1,x
 	sta $11
 	rts
 
@@ -878,37 +892,159 @@ LA3F8
     rts
 
 ;-----------------------------------------------------------------------------------
+; snake head and body sprites
 
-DATA_UNKNOWN_G
-	!byte $14, $14, $55, $7d, $7d, $55, $14, $14
-DATA_UNKNOWN_G1
-	!byte $3c, $3c, $ff, $d7, $d7, $ff, $3c, $3c
-DATA_UNKNOWN_G2
-	!byte $28, $28, $aa, $96, $96, $aa, $28, $28
-DATA_UNKNOWN_G3
-	!byte $14, $14, $96, $96, $55, $55, $ff, $ff
-DATA_UNKNOWN_G4
-	!byte $ff, $ff, $55, $55, $96, $96, $14, $14
-DATA_UNKNOWN_G5
-	!byte $d8, $d8, $d5, $d5, $d5, $d5, $d8, $d8
-DATA_UNKNOWN_G6
-	!byte $27, $27, $57, $57, $57, $57, $27, $27
-DATA_UNKNOWN_G7
-	!byte $3c, $3c, $be, $be, $ff, $ff, $55, $55
-DATA_UNKNOWN_G8
-	!byte $55, $55, $ff, $ff, $be, $be, $3c, $3c
-DATA_UNKNOWN_G9
-	!byte $78, $78, $7f, $7f, $7f, $7f, $78, $78
-DATA_UNKNOWN_G10
-	!byte $2d, $2d, $fd, $fd, $fd, $fd, $2d, $2d
-DATA_UNKNOWN_G11
-	!byte $28, $28, $eb, $eb, $aa, $aa, $55, $55
-DATA_UNKNOWN_G12
-	!byte $55, $55, $aa, $aa, $eb, $eb, $28, $28
-DATA_UNKNOWN_G13
-	!byte $bc, $bc, $ba, $ba, $ba, $ba, $bc, $bc
-DATA_UNKNOWN_G14
-	!byte $39, $39, $a9, $a9, $a9, $a9, $39, $39
+player_snake_body_sprite
+    !byte %00010100
+    !byte %00010100
+    !byte %01010101
+    !byte %01111101
+    !byte %01111101
+    !byte %01010101
+    !byte %00010100
+    !byte %00010100
+
+enemy_snake_body_sprite  ;red normal enemy snake body colour
+    !byte %00111100
+    !byte %00111100
+    !byte %11111111
+    !byte %11010111
+    !byte %11010111
+    !byte %11111111
+    !byte %00111100
+    !byte %00111100
+
+enemy_snake_weak_body_sprite  ;green vulnerable body, snake can be eaten head first
+    !byte %00101000
+    !byte %00101000
+    !byte %10101010
+    !byte %10010110
+    !byte %10010110
+    !byte %10101010
+    !byte %00101000
+    !byte %00101000
+
+player_snake_head_up_sprite
+    !byte %00010100
+    !byte %00010100
+    !byte %10010110
+    !byte %10010110
+    !byte %01010101
+    !byte %01010101
+    !byte %11111111
+    !byte %11111111
+
+player_snake_head_down_sprite
+    !byte %11111111
+    !byte %11111111
+    !byte %01010101
+    !byte %01010101
+    !byte %10010110
+    !byte %10010110
+    !byte %00010100
+    !byte %00010100
+
+player_snake_head_right_sprite
+    !byte %11011000
+    !byte %11011000
+    !byte %11010101
+    !byte %11010101
+    !byte %11010101
+    !byte %11010101
+    !byte %11011000
+    !byte %11011000
+
+player_snake_head_left_sprite
+    !byte %00100111
+    !byte %00100111
+    !byte %01010111
+    !byte %01010111
+    !byte %01010111
+    !byte %01010111
+    !byte %00100111
+    !byte %00100111
+
+    ;red normal enemy snake head colour
+enemy_snake_head_up_sprite
+    !byte %00111100
+    !byte %00111100
+    !byte %10111110
+    !byte %10111110
+    !byte %11111111
+    !byte %11111111
+    !byte %01010101
+    !byte %01010101
+
+enemy_snake_head_down_sprite
+    !byte %01010101
+    !byte %01010101
+    !byte %11111111
+    !byte %11111111
+    !byte %10111110
+    !byte %10111110
+    !byte %00111100
+    !byte %00111100
+
+enemy_snake_head_right_sprite
+    !byte %01111000
+    !byte %01111000
+    !byte %01111111
+    !byte %01111111
+    !byte %01111111
+    !byte %01111111
+    !byte %01111000
+    !byte %01111000
+
+enemy_snake_head_left_sprite
+    !byte %00101101
+    !byte %00101101
+    !byte %11111101
+    !byte %11111101
+    !byte %11111101
+    !byte %11111101
+    !byte %00101101
+    !byte %00101101
+
+    ;green vulnerable head, snake can be eaten head first
+enemy_snake_weak_head_up_sprite
+    !byte %00101000
+    !byte %00101000
+    !byte %11101011
+    !byte %11101011
+    !byte %10101010
+    !byte %10101010
+    !byte %01010101
+    !byte %01010101
+
+enemy_snake_weak_head_down_sprite
+    !byte %01010101
+    !byte %01010101
+    !byte %10101010
+    !byte %10101010
+    !byte %11101011
+    !byte %11101011
+    !byte %00101000
+    !byte %00101000
+
+enemy_snake_weak_head_right_sprite
+    !byte %10111100
+    !byte %10111100
+    !byte %10111010
+    !byte %10111010
+    !byte %10111010
+    !byte %10111010
+    !byte %10111100
+    !byte %10111100
+
+enemy_snake_weak_head_left_sprite
+    !byte %00111001
+    !byte %00111001
+    !byte %10101001
+    !byte %10101001
+    !byte %10101001
+    !byte %10101001
+    !byte %00111001
+    !byte %00111001
 
 ;-----------------------------------------------------------------------------------
 
@@ -1064,8 +1200,8 @@ draw_maze
 	cpx #21
 	bcc .set_maze_build_from_address
 
-    ;current maze number can exceed the 20 defined maze maps,
-    ;so subtract 10 from current maze number to get one of the 20 maze maps
+    ; current maze number can exceed the 20 defined maze maps,
+    ; so subtract 10 from current maze number to get one of the 20 maze maps
 	txa
 .decide_maze_to_use
     sbc #10
@@ -1077,6 +1213,7 @@ draw_maze
 	sta maze_address_low
 	lda data_maze_addresses_high-1,x
 	sta maze_address_high
+
 	lda #0
 	sta $17
 @LA7B4
@@ -1086,60 +1223,61 @@ draw_maze
 	cpx #3
 	bcc @LA7C8
 	dex
-	jsr LA868
+	jsr draw_maze_parts
 	jsr LA899
 	ldx #1
 @LA7C8
-    jsr LA868
+    jsr draw_maze_parts
 	inc $17
 	lda $17
 	cmp #110
 	bcc @LA7B4
+
 	lda #10
 	sta $17
-	lda #<DATA_A83E
+	lda #<data_maze_part_2
 	sta $10
-	lda #>DATA_A83E
+	lda #>data_maze_part_2
 	sta $11
 @LA7DF
     jsr LA899
-	jsr LA266
+	jsr clear_something_on_screen
 	dec $17
 	bpl @LA7DF
 	lda #10
 	sta $17
-	lda #<DATA_A846
+	lda #<data_maze_part_3
 	sta $10
-	lda #>DATA_A846
+	lda #>data_maze_part_3
 	sta $11
 @LA7F5
     jsr LA899
-	jsr LA23A
+	jsr plot_something_on_screen
 	dec $17
 	bpl @LA7F5
 	lda #99
 	sta $17
-	lda #<DATA_A84E
+	lda #<data_maze_part_4
 	sta $10
-	lda #>DATA_A84E
+	lda #>data_maze_part_4
 	sta $11
 @LA80B
     jsr LA899
-	jsr LA266
+	jsr clear_something_on_screen
 	lda $17
 	sec
 	sbc #11
 	sta $17
 	bne @LA80B
-	lda #<DATA_A856
+	lda #<data_maze_part_5
 	sta $10
-	lda #>DATA_A856
+	lda #>data_maze_part_5
 	sta $11
 	lda #99
 	sta $17
 @LA826
     jsr LA899
-	jsr LA23A
+	jsr plot_something_on_screen
 	lda $17
 	sec
 	sbc #11
@@ -1148,96 +1286,103 @@ draw_maze
 	rts
 
 ;-----------------------------------------------------------------------------------
+; maze part data
 
-DATA_A836
-	!byte $a0
-	!byte $a0
-	!byte $a0
-	!byte $a0
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-DATA_A83E
-	!byte $a5
-	!byte $a5
-	!byte $a5
-	!byte $a5
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-DATA_A846
-	!byte $55
-	!byte $55
-	!byte $55
-	!byte $55
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-DATA_A84E
-	!byte $a0
-	!byte $a0
-	!byte $a0
-	!byte $a0
-	!byte $50
-	!byte $50
-	!byte $50
-	!byte $50
-DATA_A856
-	!byte $50
-	!byte $50
-	!byte $50
-	!byte $50
-	!byte $50
-	!byte $50
-	!byte $50
-	!byte $50
-DATA_LA85E
-    !byte <DATA_A836
-	!byte <DATA_A83E
-	!byte <DATA_A84E
-DATA_LA861
-    !byte >DATA_A836
-	!byte >DATA_A83E
-DATA_LA863
-    !byte >DATA_A84E
-	!byte $08
-DATA_LA865
-    !byte $00
-	!byte $00
-	!byte $08
+data_maze_part_1
+    !byte %10100000
+    !byte %10100000
+    !byte %10100000
+    !byte %10100000
+    !byte %00000000
+    !byte %00000000
+    !byte %00000000
+    !byte %00000000
+data_maze_part_2
+    !byte %10100101
+    !byte %10100101
+    !byte %10100101
+    !byte %10100101
+    !byte %00000000
+    !byte %00000000
+    !byte %00000000
+    !byte %00000000
+data_maze_part_3
+    !byte %01010101
+    !byte %01010101
+    !byte %01010101
+    !byte %01010101
+    !byte %00000000
+    !byte %00000000
+    !byte %00000000
+    !byte %00000000
+data_maze_part_4
+    !byte %10100000
+    !byte %10100000
+    !byte %10100000
+    !byte %10100000
+    !byte %01010000
+    !byte %01010000
+    !byte %01010000
+    !byte %01010000
+data_maze_part_5
+    !byte %01010000
+    !byte %01010000
+    !byte %01010000
+    !byte %01010000
+    !byte %01010000
+    !byte %01010000
+    !byte %01010000
+    !byte %01010000
+
+;-----------------------------------------------------------------------------------
+; maze part addresses
+
+data_maze_parts_low
+    !byte <data_maze_part_1
+	!byte <data_maze_part_2
+	!byte <data_maze_part_4
+data_maze_parts_high
+    !byte >data_maze_part_1
+	!byte >data_maze_part_2
+    !byte >data_maze_part_4
 
 ;-----------------------------------------------------------------------------------
 
-LA868
+data_draw_maze_part_horizontal_offset
+	!byte $08, $00
+data_draw_maze_part_vertical_offset
+	!byte $00, $08
+
+;-----------------------------------------------------------------------------------
+
+draw_maze_parts
     stx $0d
-	lda DATA_LA85E,x
+	lda data_maze_parts_low,x
 	sta $10
-	lda DATA_LA861,x
+	lda data_maze_parts_high,x
 	sta $11
-	jsr LA23A
+	jsr plot_something_on_screen
 	ldx $0d
-	beq @LA898
+	beq .end_draw_maze_parts
 	lda $0e
 	clc
-	adc DATA_LA863,x
+	adc data_draw_maze_part_horizontal_offset-1,x
 	sta $0e
 	lda $0f
-	adc DATA_LA865,x
+	adc data_draw_maze_part_vertical_offset-1,x
 	sta $0f
 	lda $10
 	clc
 	adc #8
 	sta $10
-	bcc @LA895
+    bcc *+4  ;skip high byte update
 	inc $11
-@LA895
-    jmp LA23A
+    jmp plot_something_on_screen
 
-@LA898
+.end_draw_maze_parts
     rts
+
+;-----------------------------------------------------------------------------------
 
 LA899
     lda $17
@@ -1309,7 +1454,14 @@ LA8D6
 ;-----------------------------------------------------------------------------------
 
 data_for_snake_entrance_door
-	!byte $55, $55, $55, $55, $00, $00, $00, $00
+    !byte %01010101
+    !byte %01010101
+    !byte %01010101
+    !byte %01010101
+    !byte %00000000
+    !byte %00000000
+    !byte %00000000
+    !byte %00000000
 
 ;-----------------------------------------------------------------------------------
 
@@ -1332,11 +1484,11 @@ LA908
 	sta $10
 	lda #>data_for_snake_entrance_door
 	sta $11
-	bcs @LA919
-	jmp LA266
+	bcs .goto_plot_something_on_screen_1
+	jmp clear_something_on_screen
 
-@LA919
-    jmp LA23A
+.goto_plot_something_on_screen_1
+    jmp plot_something_on_screen
 
 LA91C
     sta $06
@@ -1349,24 +1501,26 @@ LA921
     jsr LA297
 	jsr LA3CE
 @LA92D
-    jsr LA23A
+    jsr plot_something_on_screen
 	jsr LA3A0
 	dec $07
 	bne @LA927
 	rts
+
+;-----------------------------------------------------------------------------------
 
 update_heading
     stx $0e
 	sty $0f
 	ldy #0
 	sty $5c
-@LA940
+.update_heading_loop
     jsr set_screen_coordinates
 	lda #0
 	sta $11
 	ldy $5c
 	lda (text_pointer_low),y
-	beq @LA966
+	beq .end_update_heading
 	sec
 	sbc #64
 	ldy #3
@@ -1381,23 +1535,25 @@ update_heading
 	adc $11
 	jsr LA986
 	inc $5c
-	bne @LA940
-@LA966
+	bne .update_heading_loop
+.end_update_heading
     rts
+
+;-----------------------------------------------------------------------------------
 
 set_screen_coordinates
     lda #0
 	sta $10
 	lda #133
 	sta $11
-	jmp LA23A
+	jmp plot_something_on_screen
 
 LA972
     lda #0
 	sta $10
 	lda #133
 	sta $11
-	jmp LA266
+	jmp clear_something_on_screen
 
 plot_A_on_screen
     asl
@@ -1408,7 +1564,7 @@ plot_A_on_screen
 	lda #129
 LA986
     sta $11
-	jsr LA266
+	jsr clear_something_on_screen
 	lda $0e
 	clc
 	adc #8
@@ -1711,7 +1867,7 @@ data_sound_end
 
 clear_all_sound_channels
 
-    ;clear sounds on each channel
+    ; clear sounds on each channel
     lda #%00101010  ;aux colour red, volume 10
 	sta _VOLUME
 	ldx #<data_clear_all_sound_channels
@@ -1756,8 +1912,7 @@ LAB4C
 DATA_UNKNOWN_7
 	!byte 2, 1, 4, 3
 DATA_UNKNOWN_7A
-	!byte $32, $50, $6e, $8c, $aa, $be, $d2, $e1
-	!byte $f0, $fa
+	!byte $32, $50, $6e, $8c, $aa, $be, $d2, $e1, $f0, $fa
 
 ;-----------------------------------------------------------------------------------
 
@@ -1779,7 +1934,7 @@ LAB7A
 	bpl @LAB93
 	cmp #128
 	beq @LAB9D
-	jsr LACB7
+	jsr dead_snake_animation
 	jmp @LABAD
 
 @LAB93
@@ -1818,19 +1973,19 @@ LABBA
 @LABBF
     bit $13
 	bmi @LABBE
-	jsr LAC3E
+	jsr shift_77_series_bytes
 	cmp #128
 	bcc @LABBE
-	jsr LAC3E
+	jsr shift_77_series_bytes
 	ldy current_maze
 	cpy #11
-	bcc @LABD5
-	ldy #10
-@LABD5
+	bcc .use_current_maze_for_Y
+	ldy #10  ;limit Y if maze number is too big
+.use_current_maze_for_Y
     cmp DATA_UNKNOWN_7A-1,y
 	bcc @LABED
 @LABDA
-    jsr LAC3E
+    jsr shift_77_series_bytes
 	and #3
 	clc
 	adc #1
@@ -1897,19 +2052,20 @@ LABBA
 	ldx #1
 	bne @LAC03
 
-LAC3E
+shift_77_series_bytes
     stx $7c
 	lda $77
 	sec
 	adc $7a
 	adc $7b
 	sta $77
+
 	ldx #3
-@LAC4B
-    lda $77,x
-	sta $78,x
+.shift_77_series_bytes_4_times_loop
+    lda $77,x  ;$7a, $79, $78, $77
+	sta $78,x  ;$7b, $7a, $79, $78
 	dex
-	bpl @LAC4B
+	bpl .shift_77_series_bytes_4_times_loop
 	ldx $7c
 	rts
 
@@ -1947,79 +2103,85 @@ more_player_and_enemy_snake_interactions
 	rts
 
 ;-----------------------------------------------------------------------------------
+; disintegrating snake sprites
 
-DATA_AC7B
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $30
-	!byte $30
-	!byte $00
-	!byte $00
-    !byte $00
-DATA_AC83
-	!byte $00
-	!byte $00
-	!byte $28
-	!byte $3c
-	!byte $3c
-	!byte $28
-	!byte $28
-	!byte $00
-DATA_AC8B
-	!byte $00
-	!byte $28
-	!byte $28
-	!byte $3c
-	!byte $3c
-	!byte $28
-	!byte $28
-	!byte $00
-DATA_AC93
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $10
-	!byte $10
-	!byte $00
-	!byte $00
-	!byte $00
-DATA_AC9B
-	!byte $00
-	!byte $00
-	!byte $14
-	!byte $3c
-	!byte $3c
-	!byte $14
-	!byte $00
-	!byte $00
-DATA_ACA3
-	!byte $00
-	!byte $14
-	!byte $14
-	!byte $3c
-	!byte $3c
-	!byte $14
-    !byte $14
-	!byte $00
-DATA_LACAB
-	!byte <DATA_AC7B
-	!byte <DATA_AC83
-	!byte <DATA_AC8B
-	!byte <DATA_AC93
-    !byte <DATA_AC9B
-	!byte <DATA_ACA3
-DATA_LACB1
-	!byte >DATA_AC7B
-	!byte >DATA_AC83
-	!byte >DATA_AC8B
-	!byte >DATA_AC93
-	!byte >DATA_AC9B
-	!byte >DATA_ACA3
+dead_snake_part_1
+    !byte %00000000
+    !byte %00000000
+    !byte %00000000
+    !byte %00110000
+    !byte %00110000
+    !byte %00000000
+    !byte %00000000
+    !byte %00000000
+dead_snake_part_2
+    !byte %00000000
+    !byte %00000000
+    !byte %00101000
+    !byte %00111100
+    !byte %00111100
+    !byte %00101000
+    !byte %00101000
+    !byte %00000000
+dead_snake_part_3
+    !byte %00000000
+    !byte %00101000
+    !byte %00101000
+    !byte %00111100
+    !byte %00111100
+    !byte %00101000
+    !byte %00101000
+    !byte %00000000
+dead_snake_part_4
+    !byte %00000000
+    !byte %00000000
+    !byte %00000000
+    !byte %00010000
+    !byte %00010000
+    !byte %00000000
+    !byte %00000000
+    !byte %00000000
+dead_snake_part_5
+    !byte %00000000
+    !byte %00000000
+    !byte %00010100
+    !byte %00111100
+    !byte %00111100
+    !byte %00010100
+    !byte %00000000
+    !byte %00000000
+dead_snake_part_6
+    !byte %00000000
+    !byte %00010100
+    !byte %00010100
+    !byte %00111100
+    !byte %00111100
+    !byte %00010100
+    !byte %00010100
+    !byte %00000000
+
+;-----------------------------------------------------------------------------------
+; dead snake animation addresses
+
+dead_snake_part_address_low
+	!byte <dead_snake_part_1
+	!byte <dead_snake_part_2
+	!byte <dead_snake_part_3
+	!byte <dead_snake_part_4
+    !byte <dead_snake_part_5
+	!byte <dead_snake_part_6
+dead_snake_part_address_high
+	!byte >dead_snake_part_1
+	!byte >dead_snake_part_2
+	!byte >dead_snake_part_3
+	!byte >dead_snake_part_4
+	!byte >dead_snake_part_5
+	!byte >dead_snake_part_6
 
 ;-----------------------------------------------------------------------------------
 
-LACB7
+dead_snake_animation
+
     ldx $1e
 	sta $52
 	lda $80,x
@@ -2028,7 +2190,7 @@ LACB7
 	clc
 	adc #7
 	sta $06
-@LACC5
+.dead_snake_animate_loop
     jsr LA297
 	jsr LA972
 	lda $52
@@ -2037,15 +2199,15 @@ LACB7
 	cmp #2
 	bcc @LACE2
 	tax
-	lda DATA_LACAB-2,x
+	lda dead_snake_part_address_low-2,x
 	sta $10
-	lda DATA_LACB1-2,x
+	lda dead_snake_part_address_high-2,x
 	sta $11
-	jsr LA23A
+	jsr plot_something_on_screen
 @LACE2
     jsr LA3A0
 	dec $07
-	bne @LACC5
+	bne .dead_snake_animate_loop
 	rts
 
 ;-----------------------------------------------------------------------------------
@@ -2055,14 +2217,14 @@ calculate_score_values_for_maze
     lda current_maze
 	cmp #21
 	bcc .maze_less_than_21
-	lda #20  ;cap maze to 20 for calculating score values
+	lda #20  ; cap maze to 20 for calculating score values
 .maze_less_than_21
     pha
 	lsr  ;divide maze number (level) by two
 	tax  ;becomes X
 	tay  ;and Y
 
-    ;calculate score for eating snake head
+    ; calculate score for eating snake head
 	lda #0
 	sed  ;set to decimal
 	clc
@@ -2072,7 +2234,7 @@ calculate_score_values_for_maze
 	bpl .increase_eat_snake_head_score_loop
 	sta score_for_eat_snake_head
 
-    ;calculate score for eating snake body segment
+    ; calculate score for eating snake body segment
 	clc
 	lda #0
 .increase_eat_snake_body_score_loop
@@ -2434,235 +2596,52 @@ handle_player_and_enemy_snake_interactions
     rts
 
 ;-----------------------------------------------------------------------------------
+; Junk bytes not used, they could be replaced with !fill 200,0 but are kept to allow
+; a matching binary comparison with the original program
+data_junk_bytes
+    !byte $1a, $af, $20, $62, $b3, $20, $e4, $b3, $e8, $e0, $07, $d0, $f2, $a9, $40, $85
+    !byte $1e, $a9, $50, $85, $1f, $a5, $10, $38, $e9, $01, $0a, $aa, $bd, $02, $af, $85
+    !byte $c2, $bd, $03, $af, $85, $c3, $a0, $00, $98, $48, $b1, $c2, $20, $62, $b3, $68
+    !byte $a8, $a5, $1e, $18, $69, $08, $85, $1e, $c8, $c0, $06, $d0, $eb, $20, $29, $b3
+    !byte $09, $20, $85, $35, $e6, $28, $a5, $28, $f0, $07, $c9, $7f, $f0, $03, $4c, $8c
+    !byte $af, $20, $3d, $b0, $20, $29, $b3, $09, $20, $c5, $35, $f0, $e7, $4c, $73, $b2
+    !byte $a9, $3c, $85, $1e, $a2, $07, $a0, $00, $a9, $4e, $85, $1f, $8a, $48, $20, $7e
+    !byte $b3, $68, $aa, $a9, $00, $91, $00, $a0, $14, $91, $00, $20, $e4, $b3, $ca, $10
+    !byte $e5, $60, $54, $5c, $b4, $bc, $be, $be, $be, $be, $47, $01, $0d, $05, $20, $4f
+    !byte $16, $05, $12, $20, $3e, $ad, $20, $73, $b2, $20, $ee, $ab, $20, $c1, $b1, $a9
+    !byte $38, $85, $1e, $a9, $58, $85, $1f, $a2, $00, $bd, $c2, $af, $20, $62, $b3, $20
+    !byte $e4, $b3, $e8, $e0, $09, $d0, $f2, $20, $2a, $a7, $20, $2a, $a7, $20, $67, $a1
+    !byte $20, $2a, $a7, $4c, $2a, $a7, $05, $ff
 
-DATA_NO_LABEL_9
-	!byte $1a
-	!byte $af
-	!byte $20
-	!byte $62
-	!byte $b3
-	!byte $20
-	!byte $e4
-	!byte $b3
-	!byte $e8
-	!byte $e0
-	!byte $07
-	!byte $d0
-	!byte $f2
-	!byte $a9
-	!byte $40
-	!byte $85
-	!byte $1e
-	!byte $a9
-	!byte $50
-	!byte $85
-	!byte $1f
-	!byte $a5
-	!byte $10
-	!byte $38
-	!byte $e9
-	!byte $01
-	!byte $0a
-	!byte $aa
-	!byte $bd
-	!byte $02
-	!byte $af
-	!byte $85
-	!byte $c2
-	!byte $bd
-	!byte $03
-	!byte $af
-	!byte $85
-	!byte $c3
-	!byte $a0
-	!byte $00
-	!byte $98
-	!byte $48
-	!byte $b1
-	!byte $c2
-	!byte $20
-	!byte $62
-	!byte $b3
-	!byte $68
-	!byte $a8
-	!byte $a5
-	!byte $1e
-	!byte $18
-	!byte $69
-	!byte $08
-	!byte $85
-	!byte $1e
-	!byte $c8
-	!byte $c0
-	!byte $06
-	!byte $d0
-	!byte $eb
-	!byte $20
-	!byte $29
-	!byte $b3
-	!byte $09
-	!byte $20
-	!byte $85
-	!byte $35
-	!byte $e6
-	!byte $28
-	!byte $a5
-	!byte $28
-	!byte $f0
-	!byte $07
-	!byte $c9
-	!byte $7f
-	!byte $f0
-	!byte $03
-	!byte $4c
-	!byte $8c
-	!byte $af
-	!byte $20
-	!byte $3d
-	!byte $b0
-	!byte $20
-	!byte $29
-	!byte $b3
-	!byte $09
-	!byte $20
-	!byte $c5
-	!byte $35
-	!byte $f0
-	!byte $e7
-	!byte $4c
-	!byte $73
-	!byte $b2
-	!byte $a9
-	!byte $3c
-	!byte $85
-	!byte $1e
-	!byte $a2
-	!byte $07
-	!byte $a0
-	!byte $00
-	!byte $a9
-	!byte $4e
-	!byte $85
-	!byte $1f
-	!byte $8a
-	!byte $48
-	!byte $20
-	!byte $7e
-	!byte $b3
-	!byte $68
-	!byte $aa
-	!byte $a9
-	!byte $00
-	!byte $91
-	!byte $00
-	!byte $a0
-	!byte $14
-	!byte $91
-	!byte $00
-	!byte $20
-	!byte $e4
-	!byte $b3
-	!byte $ca
-	!byte $10
-	!byte $e5
-	!byte $60
-	!byte $54
-	!byte $5c
-	!byte $b4
-	!byte $bc
-	!byte $be
-	!byte $be
-	!byte $be
-	!byte $be
-	!byte $47
-	!byte $01
-	!byte $0d
-	!byte $05
-	!byte $20
-	!byte $4f
-	!byte $16
-	!byte $05
-	!byte $12
-	!byte $20
-	!byte $3e
-	!byte $ad
-	!byte $20
-	!byte $73
-	!byte $b2
-	!byte $20
-	!byte $ee
-	!byte $ab
-	!byte $20
-	!byte $c1
-	!byte $b1
-	!byte $a9
-	!byte $38
-	!byte $85
-	!byte $1e
-	!byte $a9
-	!byte $58
-	!byte $85
-	!byte $1f
-	!byte $a2
-	!byte $00
-	!byte $bd
-	!byte $c2
-	!byte $af
-	!byte $20
-	!byte $62
-	!byte $b3
-	!byte $20
-	!byte $e4
-	!byte $b3
-	!byte $e8
-	!byte $e0
-	!byte $09
-	!byte $d0
-	!byte $f2
-	!byte $20
-	!byte $2a
-	!byte $a7
-	!byte $20
-	!byte $2a
-	!byte $a7
-	!byte $20
-	!byte $67
-	!byte $a1
-	!byte $20
-	!byte $2a
-	!byte $a7
-	!byte $4c
-	!byte $2a
-	!byte $a7
-	!byte $05
-	!byte $ff
-DATA_LB000
-	!byte $00
-	!byte $00
-	!byte $38
-	!byte $ee
-	!byte $bb
-	!byte $ee
-	!byte $38
-	!byte $00
-DATA_LB008
-	!byte $00
-	!byte $00
-	!byte $14
-	!byte $ff
-	!byte $55
-	!byte $ff
-	!byte $14
-	!byte $00
-DATA_LB00F
-	!byte $00
-	!byte $00
-	!byte $3c
-	!byte $ff
-	!byte $ff
-	!byte $ff
-	!byte $3c
-	!byte $00
+;-----------------------------------------------------------------------------------
+
+enemy_snake_egg_sprite
+    !byte %00000000
+    !byte %00000000
+    !byte %00111000
+    !byte %11101110
+    !byte %10111011
+    !byte %11101110
+    !byte %00111000
+    !byte %00000000
+player_snake_egg_sprite
+    !byte %00000000
+    !byte %00000000
+    !byte %00010100
+    !byte %11111111
+    !byte %01010101
+    !byte %11111111
+    !byte %00010100
+    !byte %00000000
+developing_egg_sprite
+    !byte %00000000
+    !byte %00000000
+    !byte %00111100
+    !byte %11111111
+    !byte %11111111
+    !byte %11111111
+    !byte %00111100
+    !byte %00000000
 DATA_LB018
     !byte $1f
 	!byte $3d
@@ -2681,26 +2660,26 @@ clear_25_2d_2b
 
 LB024
     lda #1
-	lsr $9124  ;Timer least significant byte (LSB) of count
+	lsr $9124  ;timer least significant byte (LSB) of count
 	bcc @LB02D
 	lda #0
 @LB02D
     sta $21
-	jsr LAC3E
+	jsr shift_77_series_bytes
 	and #63
 	ora #15
 	sta $20
 	rts
 
 LB039
-    lda #<DATA_LB00F
+    lda #<developing_egg_sprite
 	sta $10
-	lda #>DATA_LB00F
+	lda #>developing_egg_sprite
 	sta $11
-	jmp LA266
+	jmp clear_something_on_screen
 
 LB044
-    jsr LAC3E
+    jsr shift_77_series_bytes
 	pha
 	ora #63
 	sta $28
@@ -2882,11 +2861,11 @@ handle_snake_eggs
 	jsr LA297
 @LB177
     jsr LB039
-	lda #<DATA_LB000
+	lda #<enemy_snake_egg_sprite
 	sta $10
-	lda #>DATA_LB000
+	lda #>enemy_snake_egg_sprite
 	sta $11
-	jsr LA23A
+	jsr plot_something_on_screen
 @LB185
     lda $2d
 	bne @LB195
@@ -2992,11 +2971,11 @@ LB22D
 	sta $0f
 LB235
     jsr LB039
-	lda #<DATA_LB008
+	lda #<player_snake_egg_sprite
 	sta $10
-	lda #>DATA_LB008
+	lda #>player_snake_egg_sprite
 	sta $11
-	jmp LA23A
+	jmp plot_something_on_screen
 
 LB243
     lda $80,x
@@ -3025,43 +3004,47 @@ LB259
 	rts
 
 ;-----------------------------------------------------------------------------------
+; frog sprite data
 
-DATA_UNKNOWN_A
-	!byte $0a
-	!byte $2a
-	!byte $3a
-	!byte $2a
-	!byte $ea
-	!byte $ea
-	!byte $ea
-	!byte $2a
-DATA_UNKNOWN_A1
-	!byte $00
-	!byte $80
-	!byte $c0
-	!byte $80
-	!byte $b0
-	!byte $b0
-	!byte $b0
-	!byte $80
-DATA_UNKNOWN_A2
-	!byte $1a
-	!byte $90
-	!byte $10
-	!byte $90
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
-DATA_UNKNOWN_A3
-	!byte $40
-	!byte $60
-	!byte $40
-	!byte $60
-	!byte $00
-	!byte $00
-	!byte $00
-	!byte $00
+data_frog_top_left
+    !byte %00001010
+    !byte %00101010
+    !byte %00111010
+    !byte %00101010
+    !byte %11101010
+    !byte %11101010
+    !byte %11101010
+    !byte %00101010
+data_frog_top_right
+    !byte %00000000
+    !byte %10000000
+    !byte %11000000
+    !byte %10000000
+    !byte %10110000
+    !byte %10110000
+    !byte %10110000
+    !byte %10000000
+data_frog_bottom_left
+    !byte %00011010
+    !byte %10010000
+    !byte %00010000
+    !byte %10010000
+    !byte %00000000
+    !byte %00000000
+    !byte %00000000
+    !byte %00000000
+data_frog_bottom_right
+    !byte %01000000
+    !byte %01100000
+    !byte %01000000
+    !byte %01100000
+    !byte %00000000
+    !byte %00000000
+    !byte %00000000
+    !byte %00000000
+
+;-----------------------------------------------------------------------------------
+
 DATA_LB286
     !byte $00
 	!byte $f0
@@ -3106,12 +3089,14 @@ clear_frog_on_screen
 
     lda #%10000000  ;128
 	sta frog_display
-LB2AB
-    jsr LAC3E
+goto_shift_77_series_bytes
+    jsr shift_77_series_bytes
 	and #%01111111  ;127
 	ora #%00011111  ;31
 	sta $43
 	rts
+
+;-----------------------------------------------------------------------------------
 
 LB2B5
     stx $0e
@@ -3190,7 +3175,7 @@ plot_frog_on_screen
 	bmi @LB32C
 @LB320
     jsr LAD27
-	jsr LB42B
+	jsr plot_frog_sprite
 	jsr prepare_eat_frog_egg_snake_head_sound
 	jmp clear_frog_on_screen
 
@@ -3230,11 +3215,11 @@ plot_frog_on_screen
 	ldy #>data_frog_ribbit_sound_clip
 	jsr prepare_sound_data
 
-	jsr LB2AB
+	jsr goto_shift_77_series_bytes
 	bit frog_display
 	bpl @LB3B1
 	asl frog_display
-	jsr LAC3E
+	jsr shift_77_series_bytes
 	ldy #20
 	ldx #4
 	and #3
@@ -3246,13 +3231,13 @@ plot_frog_on_screen
 @LB384
     sty $42
 	stx $44
-	jsr LAC3E
+	jsr shift_77_series_bytes
 	and #112
 	clc
 	adc #20
 	sta $41
 @LB392
-    jmp @LB428
+    jmp .goto_start_plot_frog
 
 @LB395
     ldx #4
@@ -3264,14 +3249,14 @@ plot_frog_on_screen
 @LB3A1
     stx $41
 	sty $44
-	jsr LAC3E
+	jsr shift_77_series_bytes
 	and #48
 	clc
 	adc #20
 	sta $42
 	bne @LB392
 @LB3B1
-    jsr LB42B
+    jsr plot_frog_sprite
 	ldx $2b
 	ldy $2c
 	lda $2d
@@ -3311,7 +3296,7 @@ plot_frog_on_screen
 	bpl @LB3CE
 @LB3F1
     ldy #255
-	jsr LAC3E
+	jsr shift_77_series_bytes
 	cmp #85
 	bcc @LB400
 	iny
@@ -3344,48 +3329,50 @@ plot_frog_on_screen
 	cmp #20
 	bcc @LB413
 	sta $42
-@LB428
+.goto_start_plot_frog
     lda #0
-	!byte $2c
-LB42B
+	!byte $2c  ; odd - an error? $2c is the bit (absolute) instruction
+               ; so this part could read lda #0  bit $80a9  sta $45
+               ; the bit instruction is spurious and has no effect
+plot_frog_sprite
     lda #128
 	sta $45
 	lda $41
 	sta $0e
 	lda $42
 	sta $0f
-	lda #<DATA_UNKNOWN_A
-	ldx #>DATA_UNKNOWN_A
-	jsr @LB465
+	lda #<data_frog_top_left
+	ldx #>data_frog_top_left
+	jsr .goto_prepare_and_plot_something_on_screen
 	lda $0e
 	clc
 	adc #8
 	sta $0e
-	lda #<DATA_UNKNOWN_A1
-	ldx #>DATA_UNKNOWN_A1
-	jsr @LB465
+	lda #<data_frog_top_right
+	ldx #>data_frog_top_right
+	jsr .goto_prepare_and_plot_something_on_screen
 	lda $0f
 	clc
 	adc #8
 	sta $0f
-	lda #<DATA_UNKNOWN_A3
-	ldx #>DATA_UNKNOWN_A3
-	jsr @LB465
+	lda #<data_frog_bottom_right
+	ldx #>data_frog_bottom_right
+	jsr .goto_prepare_and_plot_something_on_screen
 	lda $0e
 	sec
 	sbc #8
 	sta $0e
-	lda #<DATA_UNKNOWN_A2
-	ldx #>DATA_UNKNOWN_A2
-@LB465
+	lda #<data_frog_bottom_left
+	ldx #>data_frog_bottom_left
+.goto_prepare_and_plot_something_on_screen
     sta $10
 	stx $11
 	bit $45
-	bpl @LB470
-	jmp LA266
+	bpl .goto_plot_something_on_screen_2
+	jmp clear_something_on_screen
 
-@LB470
-    jmp LA23A
+.goto_plot_something_on_screen_2
+    jmp plot_something_on_screen
 
 ;-----------------------------------------------------------------------------------
 
@@ -3427,12 +3414,12 @@ initialise_9000_series_data
 	dey
 	bpl .init_data_loop
 
-    ;Set auxiliary timers
+    ; set auxiliary timers
 	lda #64
 	sta $911b
 	sta $912b
 
-    ;Set timers
+    ; set timers
 	lda #255
 	sta $9116
 	sta $9117
@@ -3606,7 +3593,7 @@ display_opening_title_screen
 	ldy #>data_starting_game_on_sound_clip
 	jsr prepare_sound_data
 
-    ;display "creative software" in heading
+    ; display "creative software" in heading
 	lda #<data_heading_publisher
 	sta text_pointer_low
 	lda #>data_heading_publisher
@@ -3615,7 +3602,7 @@ display_opening_title_screen
 	ldy #0
 	jsr update_heading
 
-    ;play opening short tune on game start
+    ; play opening short tune on game start
 	lda #38
 	sta sound_loop_counter
 .play_opening_tune_loop
@@ -3625,7 +3612,7 @@ display_opening_title_screen
 	dec sound_loop_counter
 	bne .play_opening_tune_loop
 
-    ;display "presents" text in heading
+    ; display "presents" text in heading
 	lda #<data_heading_presents_title
 	sta text_pointer_low
 	lda #>data_heading_presents_title
@@ -3634,7 +3621,7 @@ display_opening_title_screen
 	ldy #8
 	jsr update_heading
 
-    ;continue opening short tune on game start
+    ; continue opening short tune on game start
 	lda #39
 	sta sound_loop_counter
 .play_short_tune_loop
@@ -3653,7 +3640,7 @@ display_opening_title_screen
 
 	jsr block_22_custom_characters
 
-    ;display "serpentine" in heading
+    ; display "serpentine" in heading
 	lda #<data_heading_game_title
 	sta text_pointer_low
 	lda #>data_heading_game_title
@@ -3857,7 +3844,7 @@ handle_player_dies
 	lsr
 	lsr
 	lsr
-	jsr LACB7
+	jsr dead_snake_animation
 	ldx $4e
 	lda DATA_LB018,x
 	tax
@@ -3883,7 +3870,7 @@ LB80C
     jsr update_player_loses_life
 	bcs end_of_game
 
-    ;Life lost, play next one
+    ; life lost, play next one
 	lda #3
 	sta $80
 
@@ -3899,7 +3886,7 @@ LB80C
 ;-----------------------------------------------------------------------------------
 
 end_of_game
-    ;All lives lost, end of game, play "last post" tune
+    ; All lives lost, end of game, play "last post" tune
     ldx #<data_last_post_end_sound_clip
 	ldy #>data_last_post_end_sound_clip
 	jsr prepare_sound_data
@@ -4203,7 +4190,7 @@ LBA41
 	bcc @LBA43
 	lda frog_display
 	bmi @LBA69
-	jsr LB42B
+	jsr plot_frog_sprite
 @LBA69
     lda $25
 	cmp #3
