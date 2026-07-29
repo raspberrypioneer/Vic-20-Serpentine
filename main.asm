@@ -69,9 +69,14 @@ snake_3_body_segments = $db  ;number of body segments
 	!byte >start_of_program  ;warm / reset start vector (high)
     !pet "a0CBM"  ;start of signature a0CBM
 
+;-----------------------------------------------------------------------------------
+; player snake table, data is saved in zero page $80 +
+; see references to zero page data for each snake in player_and_enemy_table, player_and_enemy_table_word
+
 data_zero_page_80_99
+;TODO: map what these refer to
     !byte $03  ;player_body_segments
-	!byte $00
+	!byte $00  ;snake colour number: 0 is blue, 1 is red, 2 is yellow
 	!byte $00
 	!byte $80
 	!byte $80
@@ -95,13 +100,21 @@ data_zero_page_80_99
 	!byte $a6
     !byte $aa
     !byte $aa
-    !byte $aa  ;$99
-	!fill 4, $aa
+    !byte $aa
+	!byte $aa
+    !byte $aa
+    !byte $aa
+    !byte $aa  ;$9d
+
+;-----------------------------------------------------------------------------------
+; enemy snake table for each snake, data is saved in zero page $9e + for snake 1, $bc + for snake 2, $da + for snake 3
+; see references to zero page data for each snake in player_and_enemy_table, player_and_enemy_table_word
 
 data_zero_page_9e_f7
-    !byte $3c  ;$9e, $bc, $da
-	!byte $06  ;$9f, $bd, $db number of enemy snake body segments
-	!byte $01
+;TODO: map what these refer to
+    !byte $3c  ;$9e
+	!byte $06  ;$9f number of enemy snake body segments
+	!byte $01  ;snake colour number: 0 is blue, 1 is red, 2 is yellow
 	!byte $00
 	!byte $80
 	!byte $80
@@ -241,7 +254,7 @@ initialise_zero_page
 	ldy #29
 .init_zero_page_30_loop
 	lda data_zero_page_9e_f7,y
-	sta $9e,x
+	sta player_and_enemy_table+30,x
 	dex
 	dey
 	bpl .init_zero_page_30_loop
@@ -449,7 +462,7 @@ data_screen_bitmap_address_high
 
 ;-----------------------------------------------------------------------------------
 
-LA21C
+convert_screen_row_column_to_screen_bitmap_address
 	lda screen_column
 	tay
 	and #7
@@ -473,7 +486,7 @@ LA21C
 
 plot_something_on_screen
 
-	jsr LA21C
+	jsr convert_screen_row_column_to_screen_bitmap_address
 	ldy #7
 @LA23F
 	lda #0
@@ -508,7 +521,7 @@ plot_something_on_screen
 
 clear_something_on_screen
 
-	jsr LA21C
+	jsr convert_screen_row_column_to_screen_bitmap_address
 	ldy #7
 @LA26B
 	lda #255
@@ -648,10 +661,10 @@ LA314
 	sec
 	sbc #6
 	and #7
-	bne LA322
+	bne @LA322
 	dex
 	bne @LA316
-LA322
+@LA322
 	rts
 
 ;-----------------------------------------------------------------------------------
@@ -680,7 +693,7 @@ LA32F
 	rts
 
 @LA33A
-    jsr LA8B3
+    jsr convert_screen_row_column_to_byte_in_hex_17
 	ldx $14
 	clc
 	adc DATA_LA322-1,x
@@ -749,12 +762,12 @@ add_3_to_address_06
 data_body_sprite_addresses_low
     !byte <player_snake_body_sprite
 	!byte <enemy_snake_body_sprite
-	!byte <enemy_snake_weak_body_sprite
+	!byte <enemy_weak_snake_body_sprite
 
 data_body_sprite_addresses_high
     !byte >player_snake_body_sprite
 	!byte >enemy_snake_body_sprite
-    !byte >enemy_snake_weak_body_sprite
+    !byte >enemy_weak_snake_body_sprite
 
 data_head_sprite_addresses_low
 	!byte <player_snake_head_up_sprite
@@ -765,10 +778,10 @@ data_head_sprite_addresses_low
 	!byte <enemy_snake_head_down_sprite
 	!byte <enemy_snake_head_right_sprite
 	!byte <enemy_snake_head_left_sprite
-	!byte <enemy_snake_weak_head_up_sprite
-	!byte <enemy_snake_weak_head_down_sprite
-	!byte <enemy_snake_weak_head_right_sprite
-    !byte <enemy_snake_weak_head_left_sprite
+	!byte <enemy_weak_snake_head_up_sprite
+	!byte <enemy_weak_snake_head_down_sprite
+	!byte <enemy_weak_snake_head_right_sprite
+    !byte <enemy_weak_snake_head_left_sprite
 
 data_head_sprite_addresses_high
 	!fill 7, >player_snake_head_up_sprite
@@ -830,6 +843,7 @@ LA3F8
 	inx
 	cpx #5
 	bcc @LA400
+
 	iny
 	iny
 	sty $06  ;points to player or enemy snake head
@@ -852,10 +866,10 @@ LA3F8
 	bpl @LA43F
 	ldx $05
 	lda #0
-	sta $83,x
+	sta player_and_enemy_table+3,x
 	cpy #128
 	beq @LA46D
-	bne @LA463
+	bne @LA463  ;always branch
 
 @LA43F
     lda $08
@@ -863,7 +877,7 @@ LA3F8
 	jmp plot_entire_snake_on_screen_with_prepared_coordinates
 
 @LA446
-    lsr $9114
+    lsr $9114  ;timer
 	bcs @LA457
 @LA44B
     ldy $0d
@@ -882,7 +896,7 @@ LA3F8
 	sta $0c
 	ldx $05
 	lda #0
-	sta $82,x
+	sta player_and_enemy_table+2,x
 @LA46D
     jsr clear_screen_coordinates
 	jsr prepare_snake_head_sprite_to_use
@@ -920,7 +934,7 @@ LA3F8
 @LA4AE
     lda #0
 	ldx $05
-	sta $84,x
+	sta player_and_enemy_table+4,x
 	sec
 @LA4B5
     rts
@@ -948,7 +962,7 @@ enemy_snake_body_sprite  ;red normal enemy snake body colour
     !byte %00111100
     !byte %00111100
 
-enemy_snake_weak_body_sprite  ;green vulnerable body, snake can be eaten head first
+enemy_weak_snake_body_sprite  ;green vulnerable body, snake can be eaten head first
     !byte %00101000
     !byte %00101000
     !byte %10101010
@@ -1040,7 +1054,7 @@ enemy_snake_head_left_sprite
     !byte %00101101
 
     ;green vulnerable head, snake can be eaten head first
-enemy_snake_weak_head_up_sprite
+enemy_weak_snake_head_up_sprite
     !byte %00101000
     !byte %00101000
     !byte %11101011
@@ -1050,7 +1064,7 @@ enemy_snake_weak_head_up_sprite
     !byte %01010101
     !byte %01010101
 
-enemy_snake_weak_head_down_sprite
+enemy_weak_snake_head_down_sprite
     !byte %01010101
     !byte %01010101
     !byte %10101010
@@ -1060,7 +1074,7 @@ enemy_snake_weak_head_down_sprite
     !byte %00101000
     !byte %00101000
 
-enemy_snake_weak_head_right_sprite
+enemy_weak_snake_head_right_sprite
     !byte %10111100
     !byte %10111100
     !byte %10111010
@@ -1070,7 +1084,7 @@ enemy_snake_weak_head_right_sprite
     !byte %10111100
     !byte %10111100
 
-enemy_snake_weak_head_left_sprite
+enemy_weak_snake_head_left_sprite
     !byte %00111001
     !byte %00111001
     !byte %10101001
@@ -1269,22 +1283,22 @@ draw_maze
 
 	lda #0
 	sta $17
-@LA7B4
-    jsr LA899
+.draw_maze_loop_1
+    jsr convert_byte_in_hex_17_to_screen_row_column
 	jsr LA8D6
 	tax
 	cpx #3
 	bcc @LA7C8
 	dex
 	jsr draw_maze_parts
-	jsr LA899
+	jsr convert_byte_in_hex_17_to_screen_row_column
 	ldx #1
 @LA7C8
     jsr draw_maze_parts
 	inc $17
 	lda $17
 	cmp #110
-	bcc @LA7B4
+	bcc .draw_maze_loop_1
 
 	lda #10
 	sta $17
@@ -1292,50 +1306,53 @@ draw_maze
 	sta $10
 	lda #>data_maze_part_2
 	sta $11
-@LA7DF
-    jsr LA899
+.draw_maze_loop_2
+    jsr convert_byte_in_hex_17_to_screen_row_column
 	jsr clear_something_on_screen
 	dec $17
-	bpl @LA7DF
+	bpl .draw_maze_loop_2
+
 	lda #10
 	sta $17
 	lda #<data_maze_part_3
 	sta $10
 	lda #>data_maze_part_3
 	sta $11
-@LA7F5
-    jsr LA899
+.draw_maze_loop_3
+    jsr convert_byte_in_hex_17_to_screen_row_column
 	jsr plot_something_on_screen
 	dec $17
-	bpl @LA7F5
+	bpl .draw_maze_loop_3
+
 	lda #99
 	sta $17
 	lda #<data_maze_part_4
 	sta $10
 	lda #>data_maze_part_4
 	sta $11
-@LA80B
-    jsr LA899
+.draw_maze_loop_4
+    jsr convert_byte_in_hex_17_to_screen_row_column
 	jsr clear_something_on_screen
 	lda $17
 	sec
 	sbc #11
 	sta $17
-	bne @LA80B
+	bne .draw_maze_loop_4
+
 	lda #<data_maze_part_5
 	sta $10
 	lda #>data_maze_part_5
 	sta $11
 	lda #99
 	sta $17
-@LA826
-    jsr LA899
+.draw_maze_loop_5
+    jsr convert_byte_in_hex_17_to_screen_row_column
 	jsr plot_something_on_screen
 	lda $17
 	sec
 	sbc #11
 	sta $17
-	bne @LA826
+	bne .draw_maze_loop_5
 	rts
 
 ;-----------------------------------------------------------------------------------
@@ -1415,6 +1432,7 @@ data_draw_maze_part_vertical_offset
 ;-----------------------------------------------------------------------------------
 
 draw_maze_parts
+
     stx $0d
 	lda data_maze_parts_low,x
 	sta $10
@@ -1443,29 +1461,35 @@ draw_maze_parts
 
 ;-----------------------------------------------------------------------------------
 
-LA899
+convert_byte_in_hex_17_to_screen_row_column
+
     lda $17
 	ldx #0
 	sec
-@LA89E
+.subtract_11_loop  ;divide A by 11 getting result in X
     inx
 	sbc #11
-	bcs @LA89E
+	bcs .subtract_11_loop
+
 	adc #11
 	asl
 	asl
 	asl
-	asl
+	asl  ;asl x 4 = multiply by 16
 	sta screen_column
+
 	txa
 	asl
 	asl
 	asl
-	asl
+	asl  ;asl x 4 = multiply by 16
 	sta screen_row
 	rts
 
-LA8B3
+;-----------------------------------------------------------------------------------
+
+convert_screen_row_column_to_byte_in_hex_17
+
     lda screen_row
 	lsr
 	lsr
@@ -1489,6 +1513,8 @@ LA8B3
 	adc $17
 	sta $17
 	rts
+
+;-----------------------------------------------------------------------------------
 
 LA8D6
     lda $17
@@ -1529,7 +1555,7 @@ plot_player_snake_and_open_entrance_door
 	lda #0
 	sta $08
 	lda player_and_enemy_table
-	sta $07  ;points to player or enemy snake number of segments
+	sta $07  ;points to player snake number of segments
 	lda #7
 	jsr plot_entire_snake_on_screen
 	clc
@@ -1590,17 +1616,19 @@ update_heading
 	beq .end_update_heading
 	sec
 	sbc #64
+
 	ldy #3
 @LA952
     asl
 	rol $11
 	dey
 	bne @LA952
+
 	sta $10
 	lda #128
 	clc
 	adc $11
-	jsr LA986
+	jsr plot_A_on_screen_given_screen_position_low_high_bytes
 	inc $5c
 	bne .update_heading_loop
 .end_update_heading
@@ -1615,6 +1643,8 @@ set_screen_coordinates
 	sta $11
 	jmp plot_something_on_screen
 
+;-----------------------------------------------------------------------------------
+
 clear_screen_coordinates
     lda #0
 	sta $10
@@ -1625,13 +1655,16 @@ clear_screen_coordinates
 ;-----------------------------------------------------------------------------------
 
 plot_A_on_screen
+
     asl
 	asl
 	asl
 	ora #128
 	sta $10
 	lda #129
-LA986
+
+plot_A_on_screen_given_screen_position_low_high_bytes
+
     sta $11
 	jsr clear_something_on_screen
 	lda screen_column
@@ -1959,13 +1992,13 @@ set_enemy_snake_start_position
 	sta snake_3_body_segments
 .not_maze_number_one
     lda #0
-	sta $9e
+	sta player_and_enemy_table+30
 	lda #120
-	sta $da
+	sta player_and_enemy_table+90
 
 	ldx #31  ;with below, points to enemy snake 1 body segments
 perform_snake_entrance
-    lda player_body_segments,x
+    lda player_and_enemy_table,x
 	sta $07  ;points to player or enemy snake number of segments
 	lda #1
 	sta $08
@@ -1982,7 +2015,7 @@ perform_snake_entrance
 
 DATA_UNKNOWN_7
 	!byte 2, 1, 4, 3
-DATA_UNKNOWN_7A
+DATA_UNKNOWN_8
 	!byte 50, 80, 110, 140, 170, 190, 210, 225, 240, 250
 
 ;-----------------------------------------------------------------------------------
@@ -1998,46 +2031,51 @@ handle_enemy_snake_movement
 	sta enemy_snake_speed_counter  ;reset back to the control value
 	rts
 
+;-----------------------------------------------------------------------------------
+
 perform_enemy_snake_movement
+
     lda #0
 	sta $51
-	ldx #31
-@LAB80
+	ldx #31  ;with below, points to enemy snake 1
+.each_snake_loop
     stx $1e
 	ldy $51
 	lda $002e,y
-	bpl @LAB93
+	bpl .check_if_snake_should_enter_maze
 	cmp #128
-	beq @LAB9D
+	beq .goto_delay_and_onto_next_snake
 	jsr dead_snake_animation
-	jmp @LABAD
+	jmp .goto_next_snake
 
-@LAB93
-    ldy $7f,x
+.check_if_snake_should_enter_maze
+    ldy player_and_enemy_table-1,x
 	beq @LABA8
 	dey
 	tya
-	sta $7f,x
-	beq @LABA5
-@LAB9D
+	sta player_and_enemy_table-1,x
+	beq .goto_perform_snake_entrance
+.goto_delay_and_onto_next_snake
     ldy #7
 	jsr delay_using_Y
-	jmp @LABAD
+	jmp .goto_next_snake
 
-@LABA5
+.goto_perform_snake_entrance
     jsr perform_snake_entrance
 @LABA8
     ldy $1e
 	jsr LA3F8
-@LABAD
+.goto_next_snake
     inc $51
 	lda $1e
 	clc
-	adc #30
+	adc #30  ;offset to next snake data
 	tax
 	cpx #92
-	bcc @LAB80
+	bcc .each_snake_loop
 	rts
+
+;-----------------------------------------------------------------------------------
 
 LABBA
     ldx $08
@@ -2058,7 +2096,7 @@ LABBA
 	bcc .use_current_maze_for_Y
 	ldy #10  ;limit Y if maze number is too big
 .use_current_maze_for_Y
-    cmp DATA_UNKNOWN_7A-1,y
+    cmp DATA_UNKNOWN_8-1,y
 	bcc @LABED
 @LABDA
     jsr shift_77_series_bytes
@@ -2345,40 +2383,41 @@ calculate_score_values_for_maze
 
 ;-----------------------------------------------------------------------------------
 
-LAD25
+add_segment_to_player_body
+
     ldx #5
-LAD27
-    lda $7b,x
-	cmp #6
-	bcs @LAD58
+add_segment_to_player_or_enemy_snake_body
+    lda player_and_enemy_table-5,x  ;player or enemy snake number of segments
+	cmp #6  ;max segments
+	bcs .end_add_segment_to_body
 	asl
-	adc $7b,x
-	inc $7b,x
+	adc player_and_enemy_table-5,x
+	inc player_and_enemy_table-5,x  ;add 1 to player or enemy snake number of segments
 	stx $50
 	adc $50
 	sta $50
 	tax
 	lda #0
 	sta player_and_enemy_table,x
-	lda $7e,x
+	lda player_and_enemy_table-2,x
 	sta screen_column
-	lda $7f,x
+	lda player_and_enemy_table-1,x
 	sta screen_row
 	jsr LA314
 	bne @LAD59
 	ldx $50
 	lda #0
-	sta $7d,x
+	sta player_and_enemy_table-3,x
 	lda screen_row
-	sta $82,x
+	sta player_and_enemy_table+2,x
 	lda screen_column
-	sta $81,x
-@LAD58
+	sta player_and_enemy_table+1,x
+.end_add_segment_to_body
     rts
 
 @LAD59
     ldx $50
-	ldy $7d,x
+	ldy player_and_enemy_table-3,x
 	jsr @LAD73
 	cpy #4
 	jsr @LAD6B
@@ -2390,11 +2429,11 @@ LAD27
 	clc
 	adc #8
 @LAD70
-    sta $81,x
+    sta player_and_enemy_table+1,x
 	rts
 
 @LAD73
-    lda $7e,x
+    lda player_and_enemy_table-2,x
 	sec
 	sbc #6
 	and #248
@@ -2417,9 +2456,9 @@ perform_eat_snake_body_update
 	bcs .end_eat_snake_body_update
 
     ; all body parts eaten, remove the snake head
-	lda $86,x
+	lda player_and_enemy_table+6,x
 	sta screen_column
-	lda $87,x
+	lda player_and_enemy_table+7,x
 	sta screen_row
 	jsr clear_screen_coordinates
 	clc  ;clear carry to indicate snake is dead
@@ -2430,9 +2469,9 @@ LAD9D
     ldy #2
 	ldx $1e
 @LADA1
-    lda $0085,y
+    lda player_and_enemy_table_word+5,y
 	sec
-	sbc $87,x
+	sbc player_and_enemy_table+7,x
 	bcs @LADAD
 	eor #255
 	adc #1
@@ -2457,21 +2496,22 @@ handle_player_and_enemy_snake_interactions
 	dex
 	bpl @LADBB
 	sta $7c
+
 	ldx #31  ;with below, points to enemy snake 1 body segments
 	txa
-@LADC5
+.check_next_snake_loop_3
     sta $05
 	stx $1e
-	lda $7f,x
+	lda player_and_enemy_table-1,x
 	bne @LAE26
-	lda player_body_segments,x
+	lda player_and_enemy_table,x
 	sta $07
 	ldx $1e
 	ldy #2
 @LADD5
-    lda $0085,y
+    lda player_and_enemy_table_word+5,y
 	sec
-	sbc $87,x
+	sbc player_and_enemy_table+7,x
 	bcs @LADE1
 	eor #255
 	adc #1
@@ -2513,17 +2553,19 @@ handle_player_and_enemy_snake_interactions
     inc $7c
 	lda $05
 	clc
-	adc #30
+	adc #30  ;offset to next snake data
 	tax
 	cmp #92
-	bcc @LADC5
+	bcc .check_next_snake_loop_3
+
 @LAE26
     lda #0
 	sta $7c
-	ldx #31
-@LAE2C
+
+	ldx #31  ;with below, points to enemy snake 1
+.check_next_snake_loop
     stx $1e
-	lda $7f,x
+	lda player_and_enemy_table-1,x
 	bne @LAE7F
 	ldx $7c
 	lda $3d,x
@@ -2540,7 +2582,7 @@ handle_player_and_enemy_snake_interactions
 	lda #2
 	sta $51
 @LAE4B
-    lda $0086,y
+    lda player_and_enemy_table_word+6,y
 	sec
 	sbc player_and_enemy_table,x
 	bcs @LAE57
@@ -2569,49 +2611,54 @@ handle_player_and_enemy_snake_interactions
     inc $7c
 	lda $1e
 	clc
-	adc #30
+	adc #30  ;offset to next snake data
 	tax
 	cmp #92
-	bcc @LAE2C
+	bcc .check_next_snake_loop
+
 @LAE7F
     lda #0
 	sta $4e
-	ldy #31
-@LAE85
+	ldy #31  ;with below, points to enemy snake 1 body segments
+.check_next_snake_loop_2
     sty $1e
 	ldx $4e
 	lda $2e,x
-	bne .snake_is_alive_continue
+	bne .continue_onto_next_snake
 	lda $34,x
 	beq @LAEC6
-	lda player_and_enemy_table_word,y
-	cmp player_and_enemy_table
-	bcc @LAE9B
+	lda player_and_enemy_table_word,y  ;enemy snake number of segments
+	cmp player_body_segments
+	bcc .enemy_snake_is_smaller_than_player_so_eat_it
 	jmp handle_player_dies
 
-@LAE9B
+.enemy_snake_is_smaller_than_player_so_eat_it
     ldy #137
 	sty $2e,x
-	sta $4f
-@LAEA1
+
+	sta $4f  ;enemy snake number of segments from above
+.add_to_score_for_each_enemy_segment_loop
     lda score_for_eat_snake_head
 	clc
 	jsr update_player_score
 	dec $4f
-	bne @LAEA1
+	bne .add_to_score_for_each_enemy_segment_loop
+
 	jsr plot_player_score_on_screen
-	jsr LAD25
+	jsr add_segment_to_player_body
 	jsr LB05E
 	jsr prepare_eat_frog_egg_snake_head_sound
-.snake_is_alive_continue
+
+.continue_onto_next_snake
     inc $4e
 	lda $1e
 	clc
-	adc #30
+	adc #30  ;offset to next snake data
 	tay
 	cmp #92
-	bcc @LAE85
-	jmp @LAF13
+	bcc .check_next_snake_loop_2
+
+	jmp .check_for_weak_enemy_snake
 
 @LAEC6
     lda $37,x
@@ -2634,9 +2681,9 @@ handle_player_and_enemy_snake_interactions
 	sta $2e,x
 @LAEEC
     lda $31,x
-	bne .snake_is_alive_continue
+	bne .continue_onto_next_snake
 	lda $3a,x
-	beq .snake_is_alive_continue
+	beq .continue_onto_next_snake
 	lda #5
 	sta $31,x
 	ldx #<data_eat_snake_body_2_sound_clip
@@ -2651,26 +2698,30 @@ handle_player_and_enemy_snake_interactions
 	stx $2b
 @LAF0B
     jsr perform_eat_snake_body_update
-	bcs .snake_is_alive_continue
+	bcs .continue_onto_next_snake
 	jmp handle_player_dies
 
-@LAF13
+.check_for_weak_enemy_snake
     ldx #31  ;with below, points to enemy snake 1 body segments
-@LAF15
-    lda player_body_segments,x
+.check_for_weak_next_snake_loop
+    lda player_and_enemy_table,x  ;enemy snake number of segments
 	cmp player_body_segments
-	bcc @LAF1E
-	lda #1
-	!byte $2c
-@LAF1E
-    lda #2
-	sta $81,x
+	bcc .enemy_snake_is_smaller_than_player
+	lda #1  ;red colour snake
+	!byte $2c  ; odd - an error? $2c is the bit (absolute) instruction
+               ; so this part could read lda #1  bit $02a9  sta player_and_enemy_table+1,x
+               ; the bit instruction is spurious and has no effect
+
+.enemy_snake_is_smaller_than_player
+    lda #2  ;change to weak green colour snake
+	sta player_and_enemy_table+1,x  ;enemy snake colour number
 	txa
 	clc
-	adc #30
+	adc #30  ;offset to next snake data
 	tax
 	cmp #92
-	bcc @LAF15
+	bcc .check_for_weak_next_snake_loop
+
 	ldx #2
 @LAF2D
     lda $2e,x
@@ -2732,7 +2783,7 @@ developing_egg_sprite
     !byte %00111100
     !byte %00000000
 
-DATA_LB018
+data_enemy_snake_table_offsets
     !byte 31
 	!byte 61
 	!byte 91
@@ -2761,12 +2812,17 @@ LB024
 	sta $20
 	rts
 
-LB039
+;-----------------------------------------------------------------------------------
+
+clear_developing_egg_sprite
+
     lda #<developing_egg_sprite
 	sta $10
 	lda #>developing_egg_sprite
 	sta $11
 	jmp clear_something_on_screen
+
+;-----------------------------------------------------------------------------------
 
 LB044
     jsr shift_77_series_bytes
@@ -2813,11 +2869,11 @@ handle_snake_eggs
 @LB07F
     lda $2e,x
 	bmi @LB09C
-	ldy DATA_LB018,x
+	ldy data_enemy_snake_table_offsets,x
 	lda player_and_enemy_table_word,y
 	cmp #3
 	bcc @LB09C
-	lda $0084,y
+	lda player_and_enemy_table_word+4,y
 	bmi @LB09C
 	stx $26
 	inc $25
@@ -2846,7 +2902,7 @@ handle_snake_eggs
 	lda #0
 	sta $002e,y
 	sta $25
-	ldx DATA_LB018,y
+	ldx data_enemy_snake_table_offsets,y
 	lda #1
 	tay
 	sta player_and_enemy_table,x
@@ -2856,19 +2912,20 @@ handle_snake_eggs
 	iny
 @LB0CA
     tya
-	sta $81,x
+	sta player_and_enemy_table+1,x
 	ldy #2
 @LB0CF
     lda $0022,y
-	sta $87,x
+	sta player_and_enemy_table+7,x
 	dex
 	dey
 	bpl @LB0CF
+
 	txa
 	clc
 	adc #8
 	tax
-	jsr LAD27
+	jsr add_segment_to_player_or_enemy_snake_body
 	jmp @LB158
 
 @LB0E3
@@ -2879,7 +2936,7 @@ handle_snake_eggs
 	bne @LB162
 @LB0EE
     ldy $26
-	ldx DATA_LB018,y
+	ldx data_enemy_snake_table_offsets,y
 	jsr LB243
 	jsr LA314
 	bne @LB101
@@ -2890,7 +2947,7 @@ handle_snake_eggs
     jsr LB024
 	inc $25
 	ldy $26
-	ldx DATA_LB018,y
+	ldx data_enemy_snake_table_offsets,y
 	jsr perform_eat_snake_body_update
 	ldx #2
 @LB110
@@ -2906,7 +2963,7 @@ handle_snake_eggs
 	bne @LB162
 	ldx #2
 @LB123
-    lda $85,x
+    lda player_and_enemy_table+5,x
 	sec
 	sbc $22,x
 	bcs @LB12E
@@ -2923,7 +2980,7 @@ handle_snake_eggs
 	lda $24
 	sta screen_row
 	jsr clear_screen_coordinates
-	jsr LAD25
+	jsr add_segment_to_player_body
 	lda score_for_eat_egg_low
 	jsr update_player_score_low_amount
 	lda score_for_eat_egg_high
@@ -2937,10 +2994,10 @@ handle_snake_eggs
 	sta screen_column
 	lda $24
 	sta screen_row
-	bne @LB177
+	bne .plot_enemy_egg_on_screen
 @LB162
     ldy $26
-	ldx DATA_LB018,y
+	ldx data_enemy_snake_table_offsets,y
 	stx $06
 	lda player_and_enemy_table,x
 	asl
@@ -2949,8 +3006,8 @@ handle_snake_eggs
 	adc #4
 	sta $06  ;points to player or enemy snake head
 	jsr get_screen_coordinates_for_sprite
-@LB177
-    jsr LB039
+.plot_enemy_egg_on_screen
+    jsr clear_developing_egg_sprite
 	lda #<enemy_snake_egg_sprite
 	sta $10
 	lda #>enemy_snake_egg_sprite
@@ -2971,12 +3028,12 @@ handle_snake_eggs
 @LB195
     cmp #3
 	bne @LB1DC
-	ldx #31
+	ldx #31  ;with below, points to enemy snake 1
 @LB19B
     ldy #2
 	stx $1e
 @LB19F
-    lda $87,x
+    lda player_and_enemy_table+7,x
 	sec
 	sbc $002a,y
 	bcs @LB1AB
@@ -3001,16 +3058,16 @@ handle_snake_eggs
 	clc
 	adc #5
 	tax
-	jmp LAD27
+	jmp add_segment_to_player_or_enemy_snake_body
 
 @LB1D0
     lda $1e
 	clc
-	adc #30
+	adc #30  ;offset to next snake data
 	tax
 	cmp #92
 	bcc @LB19B
-	bcs LB22D
+	bcs perform_plot_player_egg_on_screen
 
 @LB1DC
     dec $28
@@ -3039,11 +3096,11 @@ handle_snake_eggs
 
 @LB20F
     jsr LB259
-	bne LB22D
+	bne perform_plot_player_egg_on_screen
 @LB214
     lda $2d
 	cmp #3
-	beq LB22D
+	beq perform_plot_player_egg_on_screen
 	cmp #1
 	beq LB258
 	lda player_and_enemy_table
@@ -3052,20 +3109,25 @@ handle_snake_eggs
 	adc #4
 	sta $06  ;points to player or enemy snake head
 	jsr get_screen_coordinates_for_sprite
-	jmp LB235
+	jmp .plot_player_egg_on_screen
 
-LB22D
+;-----------------------------------------------------------------------------------
+
+perform_plot_player_egg_on_screen
+
     lda $2b
 	sta screen_column
 	lda $2c
 	sta screen_row
-LB235
-    jsr LB039
+.plot_player_egg_on_screen
+    jsr clear_developing_egg_sprite
 	lda #<player_snake_egg_sprite
 	sta $10
 	lda #>player_snake_egg_sprite
 	sta $11
 	jmp plot_something_on_screen
+
+;-----------------------------------------------------------------------------------
 
 LB243
     lda player_and_enemy_table,x
@@ -3076,7 +3138,7 @@ LB243
 	tax
 	ldy #2
 @LB24F
-    lda $84,x
+    lda player_and_enemy_table+4,x
 	sta $000d,y
 	dex
 	dey
@@ -3138,7 +3200,7 @@ data_frog_bottom_right
 
 ;-----------------------------------------------------------------------------------
 
-DATA_LB286
+data_frog_column_increments
     !byte 0
 	!byte 240
 	!byte 224
@@ -3152,7 +3214,7 @@ DATA_LB286
 	!byte 0
 	!byte 16
 
-DATA_LB292
+data_frog_row_increments
     !byte 224
 	!byte 240
 	!byte 0
@@ -3166,17 +3228,17 @@ DATA_LB292
 	!byte 16
 	!byte 0
 
-DATA_LB29E
-    !byte $02
-	!byte $00
-DATA_LB2A0
-    !byte $08
-	!byte $00
-	!byte $09
-	!byte $00
-	!byte $0a
-	!byte $00
-	!byte $0b
+data_to_switch_frog_increments
+    !byte 2
+	!byte 0
+data_to_get_frog_column_increments
+    !byte 8
+	!byte 0
+	!byte 9
+	!byte 0
+	!byte 10
+	!byte 0
+	!byte 11
 
 ;-----------------------------------------------------------------------------------
 
@@ -3235,7 +3297,7 @@ plot_frog_on_screen
 @LB2E6
     ldy #1
 @LB2E8
-    lda $82,x
+    lda player_and_enemy_table+2,x
 	sec
 	sbc $0041,y
 	bcs @LB2F4
@@ -3255,7 +3317,7 @@ plot_frog_on_screen
 	jsr update_player_score
 	jsr plot_player_score_on_screen
 	ldx #5
-	bne @LB320  ;always branch
+	bne .add_segment_to_player_body  ;always branch
 
 @LB30F
     ldy #0
@@ -3268,16 +3330,16 @@ plot_frog_on_screen
 @LB31B
     lda $002e,y
 	bmi @LB32C
-@LB320
-    jsr LAD27
-	jsr plot_frog_sprite
+.add_segment_to_player_body
+    jsr add_segment_to_player_or_enemy_snake_body  ;is player body in this case
+	jsr plot_frog_sprite_on_screen
 	jsr prepare_eat_frog_egg_snake_head_sound
 	jmp clear_frog_on_screen
 
 @LB32C
     lda $1e
 	clc
-	adc #30
+	adc #30  ;offset to next snake data
 	tax
 	cpx #97
 	bcc @LB2E4
@@ -3351,7 +3413,7 @@ plot_frog_on_screen
 	sta frog_location_row
 	bne @LB392
 @LB3B1
-    jsr plot_frog_sprite
+    jsr plot_frog_sprite_on_screen
 	ldx $2b
 	ldy $2c
 	lda $2d
@@ -3365,9 +3427,10 @@ plot_frog_on_screen
 @LB3C8
     stx screen_column
 	sty screen_row
+
 	ldx #1
 @LB3CE
-    ldy DATA_LB29E,x
+    ldy data_to_switch_frog_increments,x  ;Y is 0 or 2
 	lda frog_location_column,x
 	sec
 	sbc screen_column,x
@@ -3377,18 +3440,19 @@ plot_frog_on_screen
 	iny
 	iny
 	iny
-	iny
+	iny  ;Y is 4 or 6 at this point
 @LB3E0
     cmp #25
 	bcs @LB409
 	pha
-	lda DATA_LB2A0,y
-	tay
+	lda data_to_get_frog_column_increments,y  ;Y could be 0, 2, 4, 6
+	tay  ;new Y from data
 	pla
 	cmp #9
 	bcs @LB409
 	dex
 	bpl @LB3CE
+
 @LB3F1
     ldy #255
 	jsr shift_77_series_bytes
@@ -3408,7 +3472,7 @@ plot_frog_on_screen
 @LB409
     lda frog_location_column
 	clc
-	adc DATA_LB286,y
+	adc data_frog_column_increments,y
 	cmp #165
 	bcc @LB416
 .goto_clear_frog_on_screen
@@ -3418,7 +3482,7 @@ plot_frog_on_screen
     sta frog_location_column
 	lda frog_location_row
 	clc
-	adc DATA_LB292,y
+	adc data_frog_row_increments,y
 	cmp #165
 	bcs .goto_clear_frog_on_screen
 	cmp #20
@@ -3429,7 +3493,8 @@ plot_frog_on_screen
 	!byte $2c  ; odd - an error? $2c is the bit (absolute) instruction
                ; so this part could read lda #0  bit $80a9  sta $45
                ; the bit instruction is spurious and has no effect
-plot_frog_sprite
+
+plot_frog_sprite_on_screen
     lda #128
 	sta $45
 	lda frog_location_column
@@ -3964,7 +4029,7 @@ handle_player_dies
 	lsr
 	jsr dead_snake_animation
 	ldx $4e
-	lda DATA_LB018,x
+	lda data_enemy_snake_table_offsets,x
 	tax
 	lda player_body_segments,x
 	sta $07  ;points to player or enemy snake number of segments
@@ -4082,7 +4147,7 @@ handle_baby_snake
 	ldy #>data_baby_snake_1_sound_clip
 	jsr prepare_sound_data
 
-	jsr LB22D
+	jsr perform_plot_player_egg_on_screen
 
 	ldx #4
 .delay_using_X_4_1
@@ -4097,14 +4162,14 @@ handle_baby_snake
 	ldx #2
 @LB8ED
     lda $2a,x
-	sta $85,x
+	sta player_and_enemy_table+5,x
 	dex
 	bpl @LB8ED
 	lda player_and_enemy_table
 	pha
 	lda #1
 	sta player_and_enemy_table
-	jsr LAD25
+	jsr add_segment_to_player_body
 	ldy #0
 	jsr LA3F8
 	jsr LB916
@@ -4223,7 +4288,7 @@ LB916
 	lda $2d
 	cmp #3
 	bne @LB9DF
-	jsr LB22D
+	jsr perform_plot_player_egg_on_screen
 @LB9DF
     ldy #10
 	jmp delay_using_Y
@@ -4254,10 +4319,10 @@ set_current_maze_to_next_one
 
     ldx current_maze
 	cpx #99
-	bcs .max_cave_number_so_end
+	bcs .max_maze_number_so_end
 	inx
 	stx current_maze
-.max_cave_number_so_end
+.max_maze_number_so_end
     rts
 
 ;-----------------------------------------------------------------------------------
@@ -4297,7 +4362,7 @@ LBA41
 @LBA43
     stx $06  ;points to player or enemy snake head
 	stx $1e
-	lda $79,x
+	lda player_and_enemy_table-7,x
 	sta $51
 @LBA4B
     jsr get_screen_coordinates_for_sprite
@@ -4305,16 +4370,18 @@ LBA41
 	jsr add_3_to_address_06
 	dec $51
 	bne @LBA4B
+
 	lda $1e
 	clc
-	adc #30
+	adc #30  ;offset to next snake data
 	tax
 	cpx #99
 	bcc @LBA43
+
 	lda frog_display
-	bmi @LBA69
-	jsr plot_frog_sprite
-@LBA69
+	bmi .skip_plot_frog_on_screen
+	jsr plot_frog_sprite_on_screen
+.skip_plot_frog_on_screen
     lda $25
 	cmp #3
 	bne @LBA7A
