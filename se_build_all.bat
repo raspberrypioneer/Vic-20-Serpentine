@@ -14,11 +14,10 @@ powershell write-host -back Green Compiled ok
 copy /b .\build\%PRGHDR%+.\build\main ".\prg\%PRG%" >nul
 
 :: Binary file comparison for unexpanded version
-fc.exe /b ".\prg\%PRG%" ".\prg\Serpentine original.prg"
-if %errorlevel%==0 (
-powershell write-host -back Green Programs match
-) else (
-powershell write-host -back Red Programs do not match
+fc.exe /b ".\prg\%PRG%" ".\prg\Serpentine original.prg" && (
+    powershell write-host -back Green Programs match
+) || (
+    powershell write-host -back Red Programs do not match
 )
 
 ) else (

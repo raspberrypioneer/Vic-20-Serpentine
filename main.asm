@@ -38,41 +38,64 @@ left = 4
 body_segments = $07
 snake_colour = $08
 snake_direction = $09
+direction_change_indicator = $0c
 maze_part_to_plot = $0d
+screen_coords_table = $0d  ;$0d (segment_direction), $0e (screen_column), $0f (screen_row)
+screen_coords_table_word = $0d  ;as above
 segment_direction = $0d
-segment_direction_word = $000d
 screen_column = $0e
 screen_row = $0f
 maze_address_low = $15
 maze_address_high = $16
+
 player_lives = $18
 current_maze = $19
 enemy_snake_speed_control = $1c
 enemy_snake_speed_counter = $1d
+
 enemy_egg_location_column = $23
 enemy_egg_location_row = $24
+enemy_egg_status = $25  ;0, 1, 2, 3  ;TODO - assumed, 0 (no egg), 3 (egg laid), 1 and 2 (incubation timers)
+enemy_snake_with_egg = $26  ;0, 1, 2, 3  ;TODO - assumed pointer to snake developing or has laid an egg
+dead_enemy_snake_to_replace_with_egg = $27  ;0, 1, 2, 3 pointer to dead snake which can have a replacement egg laid for it
+
 player_egg_location_column = $2b
 player_egg_location_row = $2c
+player_egg_status = $2d  ;0, 1, 2, 3  ;TODO - assumed, 0 (no egg), 3 (egg laid), 1 and 2 (incubation timers)
+
+snake_tick_table = $2e  ;game tick counter for when snakes can do things
+
 frog_display = $40
 frog_location_column = $41
 frog_location_row = $42
+
+snake_counter = $4e  ;0, 1, 2
 scroll_heading_position = $46
 scroll_heading_delay = $47
 sound_loop_counter = $48
 end_loop_counter = $49
+
 score_for_eat_snake_head = $4a
 score_for_eat_snake_body = $4b
 score_for_eat_egg_low = $4c
 score_for_eat_egg_high = $4d
+
+temp1 = $50
+temp2 = $51
+temp3 = $52
+
 sound_hiss_counter = $53
 player_score = $54  ;3 bytes $54, $55, $56
 high_score = $57  ;3 bytes $57, $58, $59
 text_pointer_low = $5d
 text_pointer_high = $5e
+
 player_and_enemy_table = $80  ;table where player and enemy snake data is held
 player_and_enemy_table_word = $0080  ;table where player and enemy snake data is held (alternate reference)
+enemy_snake_table = $80  ;table where enemy snake data is held (used to indicate enemy snake only)
 player_body_segments = $80  ;number of body segments
 player_snake_direction = $82  ;direction indicator
+
 snake_1_body_segments = $9f  ;number of body segments
 snake_2_body_segments = $bd  ;number of body segments
 snake_3_body_segments = $db  ;number of body segments
@@ -231,7 +254,7 @@ play_one_life
 	jsr handle_player_movement
 	jsr handle_enemy_snake_movement
 	jsr handle_player_and_enemy_snake_interactions
-	jsr handle_snake_eggs
+	jsr handle_player_and_enemy_snake_eggs
 	jsr more_player_and_enemy_snake_interactions
 	jsr handle_frog_actions
 	jsr play_sounds
@@ -259,7 +282,7 @@ initialise_zero_page
 	ldy #25
 .init_zero_page_loop
 	lda data_zero_page_80_99,y
-	sta player_and_enemy_table_word,y
+	sta player_and_enemy_table_word,y  ;initialise all from table
 	dey
 	bne .init_zero_page_loop
 
@@ -288,7 +311,7 @@ initialise_zero_page
 	ldy #29
 .init_zero_page_30_loop
 	lda data_zero_page_9e_f7,y
-	sta player_and_enemy_table+30,x
+	sta player_and_enemy_table+30,x  ;initialise all from table
 	dex
 	dey
 	bpl .init_zero_page_30_loop
@@ -296,7 +319,7 @@ initialise_zero_page
 	ldx #5
 	lda #0
 .clear_zero_page_2e_33
-	sta $2e,x
+	sta snake_tick_table,x  ;initialise all to zero
 	dex
 	bpl .clear_zero_page_2e_33
 	sta $1f
@@ -556,6 +579,7 @@ plot_something_on_screen
 
 clear_something_on_screen
 
+    ;unplot the given object on the screen, thereby clearing it
 	jsr convert_screen_row_column_to_screen_bitmap_address
 	ldy #7
 @LA26B
@@ -599,7 +623,7 @@ get_screen_coordinates_for_sprite_player  ;Y is 7 when called
 	ldx #2
 .get_sprite_screen_coords_loop
 	lda player_and_enemy_table_word,y  ;player_and_enemy_table with offset for sprite in Y
-	sta segment_direction,x  ;update $0f (screen_row), $0e (screen_column), $0d (segment_direction)
+	sta screen_coords_table,x  ;update $0f (screen_row), $0e (screen_column), $0d (segment_direction)
 	dey
 	dex
 	bpl .get_sprite_screen_coords_loop
@@ -612,7 +636,7 @@ set_screen_coordinates_for_sprite
 	ldy $06  ;points to player or enemy snake
 	ldx #2
 .set_sprite_screen_coords_loop
-    lda segment_direction,x  ;get $0f (screen_row), $0e (screen_column), $0d (segment_direction)
+    lda screen_coords_table,x  ;get $0f (screen_row), $0e (screen_column), $0d (segment_direction)
 	sta player_and_enemy_table_word,y  ;player_and_enemy_table with offset for sprite in Y
 	dey
 	dex
@@ -628,14 +652,14 @@ data_screen_row_increments
 
 ;-----------------------------------------------------------------------------------
 
-LA2BB
+check_and_update_screen_row_column
 	ldx segment_direction
-	bne LA2C4
+	bne update_screen_row_column_and_check_within_screen_limits
 	ldx screen_column
 	ldy screen_row
 	rts
 
-LA2C4
+update_screen_row_column_and_check_within_screen_limits
 	lda screen_row
 	clc
 	adc data_screen_row_increments-1,x
@@ -644,45 +668,53 @@ LA2C4
 	clc
 	adc data_screen_column_increments-1,x
 	tax
-	lda #128
-	sta $04
+
+	lda #%10000000  ;128 set top bit 7
+	sta $04  ;set top bit 7
+
+    ;check incremented row (Y) and column (X) are in the bounds of the screen
 	cpx #6
-	bcs @LA2DE
-	asl $04
+	bcs .column_ok_on_right_edge
+	asl $04  ;clear top bit 7
 	ldx screen_column
-@LA2DE
+.column_ok_on_right_edge
 	cpx #167
-	bcc @LA2E6
-	asl $04
+	bcc .column_ok_on_left_edge
+	asl $04  ;clear top bit 7
 	ldx screen_column
-@LA2E6
+.column_ok_on_left_edge
 	cpy #22
-	bcs @LA2EE
-	asl $04
+	bcs .row_ok_on_top_edge
+	asl $04  ;clear top bit 7
 	ldy screen_row
-@LA2EE
+.row_ok_on_top_edge
 	cpy #167
-	bcc @LA2F6
-	asl $04
+	bcc .row_ok_on_bottom_edge
+	asl $04  ;clear top bit 7
 	ldy screen_row
-@LA2F6
+.row_ok_on_bottom_edge
 	rts
 
-LA2F7
-	jsr LA2BB
+;-----------------------------------------------------------------------------------
+
+update_screen_row_column
+
+	jsr check_and_update_screen_row_column
 	stx screen_column
 	sty screen_row
 	rts
+
+;-----------------------------------------------------------------------------------
 
 LA2FF
 	lda #128
 	sta $13
 	ldx #1
 @LA305
-	lda screen_column,x
+	lda screen_coords_table+1,x  ;points to $0e (screen_column), $0f (screen_row)
 	sec
 	sbc #6
-	and #15
+	and #%00001111  ;15
 	bne @LA313
 	dex
 	bpl @LA305
@@ -693,10 +725,10 @@ LA2FF
 LA314
 	ldx #2
 @LA316
-	lda segment_direction,x  ;points to $0e (screen_column), $0f (screen_row)
+	lda screen_coords_table,x  ;points to $0e (screen_column), $0f (screen_row)
 	sec
 	sbc #6
-	and #7
+	and #%00000111  ;7
 	bne @LA322
 	dex
 	bne @LA316
@@ -712,29 +744,29 @@ data_to_add_to_hex_17
 
 LA327
 	bit $13
-	bpl .LA32D
+	bpl .ensure_segments_are_within_screen
 .LA32B_clear_carry_and_end
 	clc
 	rts
 
-.LA32D
+.ensure_segments_are_within_screen
     ldx segment_direction
-LA32F
+ensure_snake_and_segments_are_within_screen
     stx $14
-	jsr LA2C4
-	bit $04
-	bmi @LA33A
+	jsr update_screen_row_column_and_check_within_screen_limits
+	bit $04  ;check top bit 7
+	bmi .screen_column_row_are_outside_limits  ;top bit 7 is clear so branch
 .LA338_set_carry_and_end
     sec
 	rts
 
-@LA33A
+.screen_column_row_are_outside_limits
     jsr convert_screen_row_column_to_byte_in_hex_17
 	ldx $14
 	clc
 	adc data_to_add_to_hex_17-1,x
 	sta $17
-	jsr decide_which_maze_part_to_plot
+	jsr decide_which_maze_part_to_plot  ;TODO: has dual purpose but needs $15, $16 populated
 	beq .LA32B_clear_carry_and_end
 	cmp #3
 	beq .LA338_set_carry_and_end
@@ -751,12 +783,16 @@ LA32F
 	bcs .LA338_set_carry_and_end
 	bcc .LA32B_clear_carry_and_end  ;always branch
 
+;-----------------------------------------------------------------------------------
+
 LA362
+
     ldx snake_direction
 	bit $13
-	bpl LA32F
+	bpl ensure_snake_and_segments_are_within_screen
 	jsr LA314
 	bne .LA382_set_carry_and_end
+
 	ldx snake_direction
 	lda segment_direction
 	cmp data_directions-1,x
@@ -771,18 +807,22 @@ LA362
     sec
 	rts
 
-LA384
+;-----------------------------------------------------------------------------------
+
+move_something_on_screen
+
     jsr get_screen_coordinates_for_sprite
-	jsr clear_screen_coordinates
+	jsr clear_block_at_screen_coordinates
 	jsr prepare_snake_body_sprite_to_use
-LA38D
-    lda $0c
-	beq @LA397
+
+update_row_column_and_plot_something_on_screen
+    lda direction_change_indicator
+	beq .skip_direction_change_indicator_update  ;direction change indicator still zero?
 	ldy segment_direction
 	sta segment_direction
-	sty $0c
-@LA397
-    jsr LA2F7
+	sty direction_change_indicator
+.skip_direction_change_indicator_update
+    jsr update_screen_row_column
 	jsr plot_something_on_screen
 	jsr set_screen_coordinates_for_sprite
 
@@ -874,9 +914,9 @@ perform_player_or_enemy_snake_movement
     sty $06
 	sty $05
 	ldx #0
-	stx $0c
+	stx direction_change_indicator
 .set_snake_main_variables_loop
-    lda player_and_enemy_table_word,y
+    lda player_and_enemy_table_word,y  ;player_and_enemy_table with offset for sprite in Y
 	sta body_segments,x  ;update $0b, $0a, $09 (snake_direction), $08 (snake_colour), $07 (body_segments)
 	iny
 	inx
@@ -892,7 +932,7 @@ perform_player_or_enemy_snake_movement
 	jsr LA314
 	bne @LA421
 	lda segment_direction
-	sta $0c
+	sta direction_change_indicator
 @LA421
     lda snake_direction
 	beq @LA42A
@@ -932,17 +972,17 @@ perform_player_or_enemy_snake_movement
 	bcs @LA44B
 @LA463
     lda snake_direction
-	sta $0c
+	sta direction_change_indicator
 	ldx $05
 	lda #0
 	sta player_and_enemy_table+2,x
 @LA46D
-    jsr clear_screen_coordinates
+    jsr clear_block_at_screen_coordinates
 	jsr prepare_snake_head_sprite_to_use
-	jsr LA38D
+	jsr update_row_column_and_plot_something_on_screen
 	dec $07
 @LA478
-    jsr LA384
+    jsr move_something_on_screen
 	dec $07
 	bne @LA478
 	ldx $05
@@ -1601,7 +1641,7 @@ plot_player_snake_and_open_entrance_door
 
 	lda #0
 	sta snake_colour  ;is 0 for player snake, 1 or 2 for enemy
-	lda player_and_enemy_table
+	lda player_body_segments
 	sta body_segments  ;points to player snake number of segments
 	lda #7
 	jsr plot_entire_snake_on_screen
@@ -1655,26 +1695,29 @@ update_heading
 	ldy #0
 	sty $5c
 .update_heading_loop
-    jsr set_screen_coordinates
+    jsr plot_block_at_screen_coordinates
 	lda #0
 	sta $11
 	ldy $5c
 	lda (text_pointer_low),y
 	beq .end_update_heading
+
+    ; convert a text character into a reverse character address
 	sec
 	sbc #64
 
 	ldy #3
-@LA952
+.convert_to_address_loop
     asl
 	rol $11
 	dey
-	bne @LA952
+	bne .convert_to_address_loop
 
 	sta $10
 	lda #128
 	clc
 	adc $11
+
 	jsr plot_A_on_screen_given_screen_position_low_high_bytes
 	inc $5c
 	bne .update_heading_loop
@@ -1683,19 +1726,25 @@ update_heading
 
 ;-----------------------------------------------------------------------------------
 
-set_screen_coordinates
+plot_block_at_screen_coordinates
+
+    ; word in $10, $11 is $8500 (34048) which is a block character (8 bytes of $ff)
+    ; $8400 to $87FF (33792 to 33815) is the reversed upper case and graphics area
     lda #0
 	sta $10
-	lda #133
+	lda #133  ;$85
 	sta $11
 	jmp plot_something_on_screen
 
 ;-----------------------------------------------------------------------------------
 
-clear_screen_coordinates
+clear_block_at_screen_coordinates
+
+    ; word in $10, $11 is $8500 (34048) which is a block character (8 bytes of $ff)
+    ; $8400 to $87FF (33792 to 33815) is the reversed upper case and graphics area
     lda #0
 	sta $10
-	lda #133
+	lda #133  ;$85
 	sta $11
 	jmp clear_something_on_screen
 
@@ -1710,10 +1759,12 @@ plot_A_on_screen
 	sta $10
 	lda #129
 
+;-----------------------------------------------------------------------------------
+
 plot_A_on_screen_given_screen_position_low_high_bytes
 
     sta $11
-	jsr clear_something_on_screen
+	jsr clear_something_on_screen  ;this unplots the value in A on the screen, which displays it in reverse
 	lda screen_column
 	clc
 	adc #8
@@ -1862,11 +1913,11 @@ plot_score_on_screen
 	lsr
 	lsr
 	pha
-	jsr set_screen_coordinates
+	jsr plot_block_at_screen_coordinates
 	pla
 	jsr plot_A_on_screen
 @LAA64
-    jsr set_screen_coordinates
+    jsr plot_block_at_screen_coordinates
 	pla
 	and #15
 	jsr plot_A_on_screen
@@ -1922,7 +1973,7 @@ plot_player_lives_on_screen
 	sta screen_column
 	lda #8
 	sta screen_row
-	jsr set_screen_coordinates
+	jsr plot_block_at_screen_coordinates
 	lda player_lives
 	jmp plot_A_on_screen
 
@@ -2039,13 +2090,13 @@ set_enemy_snake_start_position
 	sta snake_3_body_segments
 .not_maze_number_one
     lda #0
-	sta player_and_enemy_table+30
+	sta enemy_snake_table+30  ;TODO: what does this do?
 	lda #120
-	sta player_and_enemy_table+90
+	sta enemy_snake_table+90  ;TODO: what does this do?
 
 	ldx #31  ;with below, points to enemy snake 1 body segments
 perform_snake_entrance
-    lda player_and_enemy_table,x
+    lda enemy_snake_table,x  ;enemy snake number of segments
 	sta $07  ;points to player or enemy snake number of segments
 	lda #1  ;enemy snake is red (normal) colour
 	sta snake_colour  ;is 0 for player snake, 1 or 2 for enemy
@@ -2083,11 +2134,11 @@ handle_enemy_snake_movement
 perform_enemy_snake_movement
 
     lda #0
-	sta $51
+	sta temp2
 	ldx #31  ;with below, points to enemy snake 1
 .each_snake_loop
     stx $1e
-	ldy $51
+	ldy temp2
 	lda $002e,y
 	bpl .check_if_snake_should_enter_maze
 	cmp #128
@@ -2096,11 +2147,11 @@ perform_enemy_snake_movement
 	jmp .goto_next_snake
 
 .check_if_snake_should_enter_maze
-    ldy player_and_enemy_table-1,x
+    ldy enemy_snake_table-1,x  ;TODO: what does this do?
 	beq @LABA8
 	dey
 	tya
-	sta player_and_enemy_table-1,x
+	sta enemy_snake_table-1,x  ;TODO: what does this do?
 	beq .goto_perform_snake_entrance
 .goto_delay_and_onto_next_snake
     ldy #7
@@ -2113,7 +2164,7 @@ perform_enemy_snake_movement
     ldy $1e
 	jsr perform_player_or_enemy_snake_movement
 .goto_next_snake
-    inc $51
+    inc temp2
 	lda $1e
 	clc
 	adc #30  ;offset to next snake data
@@ -2251,16 +2302,16 @@ init_zero_page_with_timers
 more_player_and_enemy_snake_interactions
 
     ldx #5
-@LAC6C
-    ldy $2e,x
-	beq @LAC77
+.reduce_ticks_by_1_loop
+    ldy snake_tick_table,x  ;$33, $32, $31, $30, $2f, $2e
+	beq .next_tick_address  ;skip to next tick counter when #0
 	cpy #128
-	beq @LAC77
+	beq .next_tick_address  ;skip to next tick counter when #128
 	dey
-	sty $2e,x
-@LAC77
+	sty snake_tick_table,x  ;$33, $32, $31, $30, $2f, $2e reduced by 1
+.next_tick_address
     dex
-	bpl @LAC6C
+	bpl .reduce_ticks_by_1_loop
 	rts
 
 ;-----------------------------------------------------------------------------------
@@ -2350,8 +2401,8 @@ dead_snake_part_address_high
 dead_snake_animation
 
     ldx $1e
-	sta $52
-	lda player_body_segments,x
+	sta temp3
+	lda player_and_enemy_table,x
 	sta body_segments
 	txa
 	clc
@@ -2359,8 +2410,8 @@ dead_snake_animation
 	sta $06  ;points to player or enemy snake head
 .dead_snake_animate_loop
     jsr get_screen_coordinates_for_sprite
-	jsr clear_screen_coordinates
-	lda $52
+	jsr clear_block_at_screen_coordinates
+	lda temp3
 	and #7
 	lsr
 	cmp #2
@@ -2440,55 +2491,56 @@ add_segment_to_player_or_enemy_snake_body
 
     ; point to the last segment
 	asl
-	adc player_and_enemy_table-5,x
+	adc player_and_enemy_table-5,x  ;player or enemy snake number of segments
 	inc player_and_enemy_table-5,x  ;add 1 to player or enemy snake number of segments
-	stx $50
-	adc $50
-	sta $50
+	stx temp1
+	adc temp1
+	sta temp1
 	tax
 
     ; get the coordinates from the last segment
 	lda #0
-	sta player_and_enemy_table,x
-	lda player_and_enemy_table-2,x
+	sta player_and_enemy_table,x  ;player or enemy snake last segment direction
+	lda player_and_enemy_table-2,x  ;player or enemy snake last segment column
 	sta screen_column
-	lda player_and_enemy_table-1,x
+	lda player_and_enemy_table-1,x  ;player or enemy snake last segment row
 	sta screen_row
 
 	jsr LA314
 	bne @LAD59
 
     ; update the new segment with the last segment coordinates
-	ldx $50
+	ldx temp1
 	lda #0
-	sta player_and_enemy_table-3,x
+	sta player_and_enemy_table-3,x  ;player or enemy snake new segment direction
 	lda screen_row
-	sta player_and_enemy_table+2,x
+	sta player_and_enemy_table+2,x  ;player or enemy snake new segment row
 	lda screen_column
-	sta player_and_enemy_table+1,x
+	sta player_and_enemy_table+1,x  ;player or enemy snake new segment column
 
 .end_add_segment_to_body
     rts
 
 @LAD59
-    ldx $50
-	ldy player_and_enemy_table-3,x
+    ldx temp1
+	ldy player_and_enemy_table-3,x  ;player or enemy snake new segment direction
 	jsr @LAD73
 	cpy #4
 	jsr @LAD6B
 	inx
 	jsr @LAD73
 	cpy #1
+
 @LAD6B
-    bne @LAD70
+    bne .update_new_segment_column
 	clc
 	adc #8
-@LAD70
-    sta player_and_enemy_table+1,x
+.update_new_segment_column
+    sta player_and_enemy_table+1,x  ;player or enemy snake new segment column
 	rts
 
 @LAD73
-    lda player_and_enemy_table-2,x
+    lda player_and_enemy_table-2,x  ;player or enemy snake last segment column
 	sec
 	sbc #6
 	and #248
@@ -2502,20 +2554,20 @@ handle_eat_snake_body_update
 
     ldx $1e
 perform_eat_snake_body_update
-    jsr get_screen_coordinates_for_last_segment
-	jsr clear_screen_coordinates
-	ldx $50  ;points to player or enemy snake
-	dec player_body_segments,x
-	lda player_body_segments,x
+    jsr get_screen_coordinates_for_last_segment  ;enemy snake
+	jsr clear_block_at_screen_coordinates
+	ldx temp1  ;points to player or enemy snake
+	dec player_and_enemy_table,x  ;player or enemy snake number of segments
+	lda player_and_enemy_table,x  ;player or enemy snake number of segments
 	cmp #2  ;are head and at least one body segment still left?
 	bcs .end_eat_snake_body_update
 
     ; all body parts eaten, remove the snake head
-	lda player_and_enemy_table+6,x
+	lda player_and_enemy_table+6,x  ;player or enemy snake head column
 	sta screen_column
-	lda player_and_enemy_table+7,x
+	lda player_and_enemy_table+7,x  ;player or enemy snake head row
 	sta screen_row
-	jsr clear_screen_coordinates
+	jsr clear_block_at_screen_coordinates
 	clc  ;clear carry to indicate snake is dead
 .end_eat_snake_body_update
     rts
@@ -2548,10 +2600,10 @@ handle_player_and_enemy_snake_interactions
 
     ldx #11
 	lda #0
-@LADBB
-    sta $34,x
+.zero_hex_34_to_3f_loop
+    sta $34,x  ;$34, $35, $36, $37, $38, $39, $3a, $3b, $3c, $3d, $3e, $3f
 	dex
-	bpl @LADBB
+	bpl .zero_hex_34_to_3f_loop
 	sta $7c
 
 	ldx #31  ;with below, points to enemy snake 1 body segments
@@ -2559,16 +2611,16 @@ handle_player_and_enemy_snake_interactions
 .check_next_snake_loop_3
     sta $05
 	stx $1e
-	lda player_and_enemy_table-1,x
+	lda enemy_snake_table-1,x  ;TODO: what does this do?
 	bne @LAE26
-	lda player_and_enemy_table,x
+	lda enemy_snake_table,x  ;enemy snake number of segments
 	sta body_segments
 	ldx $1e
 	ldy #2
 @LADD5
     lda player_and_enemy_table_word+5,y
 	sec
-	sbc player_and_enemy_table+7,x
+	sbc enemy_snake_table+7,x  ;enemy snake head row
 	bcs @LADE1
 	eor #255
 	adc #1
@@ -2585,7 +2637,7 @@ handle_player_and_enemy_snake_interactions
 	dey
 	bne @LADD5
 	ldx $7c
-	lda $2e,x
+	lda snake_tick_table,x
 	bne @LAE1A
 	jsr LAD9D
 	bcs @LAE04
@@ -2622,14 +2674,14 @@ handle_player_and_enemy_snake_interactions
 	ldx #31  ;with below, points to enemy snake 1
 .check_next_snake_loop
     stx $1e
-	lda player_and_enemy_table-1,x
-	bne @LAE7F
+	lda enemy_snake_table-1,x  ;TODO: what does this do?
+	bne .check_and_handle_snake_body_or_head_being_eaten
 	ldx $7c
 	lda $3d,x
 	bne @LAE73
 	lda $31,x
 	bne @LAE73
-	ldx player_and_enemy_table
+	ldx player_body_segments
 	dex
 	stx $07
 	ldx #9
@@ -2637,11 +2689,11 @@ handle_player_and_enemy_snake_interactions
     stx $06
 	ldy $1e
 	lda #2
-	sta $51
+	sta temp2
 @LAE4B
     lda player_and_enemy_table_word+6,y
 	sec
-	sbc player_and_enemy_table,x
+	sbc enemy_snake_table,x
 	bcs @LAE57
 	eor #255
 	adc #1
@@ -2650,7 +2702,7 @@ handle_player_and_enemy_snake_interactions
 	bcs @LAE69
 	inx
 	iny
-	dec $51
+	dec temp2
 	bne @LAE4B
 	ldx $7c
 	lda #128
@@ -2673,25 +2725,25 @@ handle_player_and_enemy_snake_interactions
 	cmp #92  ;last enemy snake offset
 	bcc .check_next_snake_loop
 
-@LAE7F
+.check_and_handle_snake_body_or_head_being_eaten
     lda #0
-	sta $4e
+	sta snake_counter  ;0, 1, 2
 	ldy #31  ;with below, points to enemy snake 1 body segments
 .check_next_snake_loop_2
     sty $1e
-	ldx $4e
-	lda $2e,x
+	ldx snake_counter
+	lda snake_tick_table,x
 	bne .continue_onto_next_snake
 	lda $34,x
 	beq .eat_snake_body_segment
 	lda player_and_enemy_table_word,y  ;enemy snake number of segments
 	cmp player_body_segments
 	bcc .enemy_snake_is_smaller_than_player_so_eat_it
-	jmp handle_player_dies
+	jmp handle_player_dies  ;enemy snake is bigger so player dies
 
 .enemy_snake_is_smaller_than_player_so_eat_it
     ldy #137
-	sty $2e,x
+	sty snake_tick_table,x  ;is #137 (enemy snake is dead) with a tick countdown until it disintegrates
 
 	sta $4f  ;enemy snake number of segments from above
 .add_to_score_for_each_enemy_segment_loop
@@ -2703,11 +2755,11 @@ handle_player_and_enemy_snake_interactions
 
 	jsr plot_player_score_on_screen
 	jsr add_segment_to_player_body
-	jsr LB05E
+	jsr reset_developing_egg_status_for_enemy_snake
 	jsr prepare_eat_frog_egg_snake_head_sound
 
 .continue_onto_next_snake
-    inc $4e
+    inc snake_counter
 	lda $1e
 	clc
 	adc #30  ;offset to next snake data
@@ -2719,24 +2771,26 @@ handle_player_and_enemy_snake_interactions
 
 .eat_snake_body_segment
     lda $37,x
-	beq @LAEEC
+	beq .continue_eat_body_segment
 	lda #3
-	sta $2e,x
+	sta snake_tick_table,x  ;is #3
 	lda score_for_eat_snake_body
 	clc
 	jsr update_player_score
 	jsr plot_player_score_on_screen
-	jsr LB05E
+	jsr reset_developing_egg_status_for_enemy_snake
 	ldx #<data_eat_snake_body_1_sound_clip
 	ldy #>data_eat_snake_body_1_sound_clip
 	jsr prepare_sound_data
 
 	jsr handle_eat_snake_body_update
-	ldx $4e
-	bcs @LAEEC
+	ldx snake_counter
+	bcs .continue_eat_body_segment
+
+    ; all body parts eaten, enemy snake is dead
 	lda #128
-	sta $2e,x
-@LAEEC
+	sta snake_tick_table,x  ;is #128 (enemy snake is dead)
+.continue_eat_body_segment
     lda $31,x
 	bne .continue_onto_next_snake
 	lda $3a,x
@@ -2748,10 +2802,10 @@ handle_player_and_enemy_snake_interactions
 	jsr prepare_sound_data
 
 	ldx #0
-	lda $2d
+	lda player_egg_status
 	cmp #2
 	bne .remove_segment
-	stx $2d
+	stx player_egg_status
 	stx player_egg_location_column
 .remove_segment
     jsr perform_eat_snake_body_update
@@ -2761,17 +2815,17 @@ handle_player_and_enemy_snake_interactions
 .check_for_weak_enemy_snake
     ldx #31  ;with below, points to enemy snake 1 body segments
 .check_for_weak_next_snake_loop
-    lda player_and_enemy_table,x  ;enemy snake number of segments
+    lda enemy_snake_table,x  ;enemy snake number of segments
 	cmp player_body_segments
 	bcc .enemy_snake_is_smaller_than_player
 	lda #1  ;red colour snake
 	!byte $2c  ; odd - an error? $2c is the bit (absolute) instruction
-               ; so this part could read lda #1  bit $02a9  sta player_and_enemy_table+1,x
+               ; so this part could read lda #1  bit $02a9  sta enemy_snake_table+1,x
                ; the bit instruction is spurious and has no effect
 
 .enemy_snake_is_smaller_than_player
     lda #2  ;change to weak green colour snake
-	sta player_and_enemy_table+1,x  ;enemy snake colour number
+	sta enemy_snake_table+1,x  ;enemy snake colour number
 	txa
 	clc
 	adc #30  ;offset to next snake data
@@ -2781,7 +2835,7 @@ handle_player_and_enemy_snake_interactions
 
 	ldx #2
 .check_eaten_all_enemy_snakes_loop
-    lda $2e,x  ;$2e, $2f, $30
+    lda snake_tick_table,x  ;$2e, $2f, $30
 	bpl .end_has_not_eaten_all_enemy_snakes
 	dex
 	bpl .check_eaten_all_enemy_snakes_loop
@@ -2849,9 +2903,9 @@ data_enemy_snake_table_offsets
 
 clear_25_2d_2b
     lda #0
-	sta $25
-	sta $2d
-	sta player_egg_location_column
+	sta enemy_egg_status  ;set to zero
+	sta player_egg_status  ;set to zero
+	sta player_egg_location_column  ;set to zero
 	rts
 
 ;-----------------------------------------------------------------------------------
@@ -2891,7 +2945,7 @@ LB044
 	and #3
 	ora #1
 	sta $29
-	lda $2d
+	lda player_egg_status
 	cmp #2
 	bne @LB05D
 	lda #1
@@ -2899,82 +2953,99 @@ LB044
 @LB05D
     rts
 
-LB05E
-    lda $4e
-	cmp $26
-	bne @LB06E
-	lda $25
+;-----------------------------------------------------------------------------------
+
+reset_developing_egg_status_for_enemy_snake
+
+    lda snake_counter
+	cmp enemy_snake_with_egg
+	bne .end_reset_developing_egg_status
+	lda enemy_egg_status
 	cmp #3
-	beq @LB06E
+	beq .end_reset_developing_egg_status
 	lda #0
-	sta $25
-@LB06E
+	sta enemy_egg_status  ;set to zero
+.end_reset_developing_egg_status
     rts
 
 ;-----------------------------------------------------------------------------------
 
-handle_snake_eggs
+handle_player_and_enemy_snake_eggs
 
-    ldy $25
-	bne @LB0A6
+    ldy enemy_egg_status
+	bne perform_enemy_snake_egg_actions
+
 	ldx #2
-@LB075
-    lda $2e,x
-	cmp #128
-	bne @LB0A1
-	stx $27
+.check_for_dead_snake_loop
+
+    ; a snake must be dead for the other snakes to be able to lay a new egg replacement
+    lda snake_tick_table,x  ;0, 1, 2
+	cmp #128  ;is snake dead?
+	bne .skip_to_another_snake
+
+    ;dead snake candidate is available to replace with a laid egg
+	stx dead_enemy_snake_to_replace_with_egg  ;0, 1, 2
+
 	ldx #2
-@LB07F
-    lda $2e,x
-	bmi @LB09C
+.check_candidate_snake_to_lay_egg_loop
+
+    lda snake_tick_table,x  ;0, 1, 2
+	bmi .skip_to_next_candidate_snake  ;can't lay a replacement egg immediately after snake has died
+
 	ldy data_enemy_snake_table_offsets,x
-	lda player_and_enemy_table_word,y
+	lda player_and_enemy_table_word,y  ;player or enemy snake number of segments
 	cmp #3
-	bcc @LB09C
-	lda player_and_enemy_table_word+4,y
-	bmi @LB09C
-	stx $26
-	inc $25
+	bcc .skip_to_next_candidate_snake  ;not enough segments to allow an egg to be laid
+
+	lda player_and_enemy_table_word+4,y  ;TODO: what is this for?
+	bmi .skip_to_next_candidate_snake
+
+	stx enemy_snake_with_egg  ;0, 1, 2
+	inc enemy_egg_status
 	jsr update_hex_20_21_using_timer
-@LB099
-    jmp @LB185
 
-@LB09C
+.goto_perform_player_egg_actions
+    jmp perform_player_egg_actions
+
+.skip_to_next_candidate_snake
     dex
-	bpl @LB07F
-	bmi @LB099  ;always branch
+	bpl .check_candidate_snake_to_lay_egg_loop
+	bmi .goto_perform_player_egg_actions  ;always branch
 
-@LB0A1
+.skip_to_another_snake
     dex
-	bpl @LB075
-	bmi @LB099  ;always branch
+	bpl .check_for_dead_snake_loop
+	bmi .goto_perform_player_egg_actions  ;always branch
 
-@LB0A6
+;-----------------------------------------------------------------------------------
+
+perform_enemy_snake_egg_actions
+
     dec $20
 	bne @LB117
 	dec $21
 	bpl @LB117
 	cpy #3
 	bne @LB0E3
-	ldy $27
+	ldy dead_enemy_snake_to_replace_with_egg  ;0, 1, 2
 	lda #0
 	sta $002e,y
-	sta $25
+	sta enemy_egg_status  ;set to zero
 	ldx data_enemy_snake_table_offsets,y
 	lda #1
 	tay
-	sta player_and_enemy_table,x
+	sta enemy_snake_table,x  ;enemy snake number of segments
 	lda #2
-	cmp player_and_enemy_table
-	bcs @LB0CA
-	iny
-@LB0CA
-    tya
-	sta player_and_enemy_table+1,x
+	cmp player_body_segments
+	bcs *+3  ;skip next instruction
+	iny  ;change to weak green colour snake
+    tya  ;keep with normal red colour snake
+	sta enemy_snake_table+1,x  ;enemy snake colour number
+
 	ldy #2
 @LB0CF
     lda $0022,y
-	sta player_and_enemy_table+7,x
+	sta enemy_snake_table+7,x  ;enemy snake head row
 	dex
 	dey
 	bpl @LB0CF
@@ -2983,19 +3054,19 @@ handle_snake_eggs
 	clc
 	adc #8
 	tax
-	jsr add_segment_to_player_or_enemy_snake_body
-	jmp @LB158
+	jsr add_segment_to_player_or_enemy_snake_body  ;has the last segment coordinates at this point
+	jmp .lay_an_enemy_snake_egg_at_given_location
 
 @LB0E3
     cpy #1
 	bne @LB0EE
 	jsr update_hex_20_21_using_timer
-	inc $25
-	bne @LB162
+	inc enemy_egg_status
+	bne .lay_an_enemy_snake_egg
 @LB0EE
-    ldy $26
+    ldy enemy_snake_with_egg
 	ldx data_enemy_snake_table_offsets,y
-	jsr get_screen_coordinates_for_last_segment
+	jsr get_screen_coordinates_for_last_segment  ;enemy snake
 	jsr LA314
 	bne @LB101
 	inc $21
@@ -3003,28 +3074,28 @@ handle_snake_eggs
 	bne @LB117
 @LB101
     jsr update_hex_20_21_using_timer
-	inc $25
-	ldy $26
+	inc enemy_egg_status
+	ldy enemy_snake_with_egg
 	ldx data_enemy_snake_table_offsets,y
 	jsr perform_eat_snake_body_update
 
 	ldx #2
 .update_enemy_egg_location_row_col_loop
-    lda segment_direction,x  ;get $0f (screen_row), $0e (screen_column), $0d (segment_direction)
+    lda screen_coords_table,x  ;get $0f (screen_row), $0e (screen_column), $0d (segment_direction)
 	sta $22,x  ;update $24 (enemy_egg_location_row), $23 (enemy_egg_location_column), $22 (segment_direction)
 	dex
 	bpl .update_enemy_egg_location_row_col_loop
 
 @LB117
-    ldy $25
+    ldy enemy_egg_status
 	cpy #1
-	beq @LB185
+	beq perform_player_egg_actions
 	cpy #3
-	bne @LB162
+	bne .lay_an_enemy_snake_egg
 
 	ldx #2
 @LB123
-    lda player_and_enemy_table+5,x
+    lda enemy_snake_table+5,x  ;enemy snake head direction
 	sec
     sbc $22,x  ;subtract $24 (enemy_egg_location_row), $23 (enemy_egg_location_column), $22 (segment_direction)
 	bcs @LB12E
@@ -3032,17 +3103,18 @@ handle_snake_eggs
 	adc #1
 @LB12E
     cmp #5
-	bcs @LB158
+	bcs .lay_an_enemy_snake_egg_at_given_location  ;has the last segment coordinates at this point
 	dex
 	bne @LB123
 
-    ; clear egg from screen and add it to player score
-	stx $25
+    ; egg has been eaten, clear egg from screen and add it to player score
+	stx enemy_egg_status  ;X is zero at this point
 	lda enemy_egg_location_column
 	sta screen_column
 	lda enemy_egg_location_row
 	sta screen_row
-	jsr clear_screen_coordinates
+	jsr clear_block_at_screen_coordinates
+
 	jsr add_segment_to_player_body
 	lda score_for_eat_egg_low
 	jsr update_player_score_low_amount
@@ -3050,40 +3122,48 @@ handle_snake_eggs
 	jsr update_player_score
 	jsr plot_player_score_on_screen
 	jsr prepare_eat_frog_egg_snake_head_sound
-	jmp @LB185
+	jmp perform_player_egg_actions
 
-@LB158
+.lay_an_enemy_snake_egg_at_given_location
     lda enemy_egg_location_column
 	sta screen_column
 	lda enemy_egg_location_row
 	sta screen_row
-	bne .plot_enemy_egg_on_screen
-@LB162
-    ldy $26
+	bne .plot_enemy_egg_on_screen  ;always branch
+
+.lay_an_enemy_snake_egg
+    ; point to the last segment for the snake with a developing egg
+    ldy enemy_snake_with_egg
 	ldx data_enemy_snake_table_offsets,y
 	stx $06
-	lda player_and_enemy_table,x
+	lda enemy_snake_table,x  ;enemy snake number of segments
 	asl
-	adc player_and_enemy_table,x
+	adc enemy_snake_table,x  ;enemy snake number of segments
 	adc $06
 	adc #4
-	sta $06  ;points to player or enemy snake head
+	sta $06
 	jsr get_screen_coordinates_for_sprite
+
 .plot_enemy_egg_on_screen
+    ; clear the developing egg and plot a laid egg
     jsr clear_developing_egg_sprite
 	lda #<enemy_snake_egg_sprite
 	sta $10
 	lda #>enemy_snake_egg_sprite
 	sta $11
 	jsr plot_something_on_screen
-@LB185
-    lda $2d
+
+;-----------------------------------------------------------------------------------
+
+perform_player_egg_actions
+
+    lda player_egg_status
 	bne @LB195
 	lda player_lives
 	cmp #9  ;player lives
 	bcs @LB194
 @LB18F
-    inc $2d
+    inc player_egg_status
 	jmp LB044
 @LB194
     rts
@@ -3091,12 +3171,13 @@ handle_snake_eggs
 @LB195
     cmp #3
 	bne @LB1DC
+
 	ldx #31  ;with below, points to enemy snake 1
 @LB19B
     ldy #2
 	stx $1e
 @LB19F
-    lda player_and_enemy_table+7,x
+    lda enemy_snake_table+7,x  ;enemy snake head row
 	sec
 	sbc $002a,y
 	bcs @LB1AB
@@ -3114,8 +3195,8 @@ handle_snake_eggs
 	sta screen_row
 	lda #0
 	sta player_egg_location_column
-	sta $2d
-	jsr clear_screen_coordinates
+	sta player_egg_status  ;set to zero
+	jsr clear_block_at_screen_coordinates
 	jsr prepare_eat_frog_egg_snake_head_sound
 	lda $1e
 	clc
@@ -3138,7 +3219,7 @@ handle_snake_eggs
 	dec $29
 	bpl .check_for_laying_player_egg
 	ldx #0
-	jsr get_screen_coordinates_for_last_segment
+	jsr get_screen_coordinates_for_last_segment  ;player snake
 	jsr LA314
 	bne @LB1F4
 	inc $29
@@ -3146,22 +3227,23 @@ handle_snake_eggs
 	bne .check_for_laying_player_egg
 @LB1F4
     jsr @LB18F
-	lda $2d
+	lda player_egg_status
 	cmp #2
 	beq .check_for_laying_player_egg
 	ldx #0
 	jsr perform_eat_snake_body_update
 	bcs @LB20F
 	ldx #0
-	jsr get_screen_coordinates_for_last_segment
+	jsr get_screen_coordinates_for_last_segment  ;player snake
 	jsr set_egg_screen_column_row
 	jmp clear_maze_objects_and_player_loses_life
 
 @LB20F
     jsr set_egg_screen_column_row
 	bne perform_plot_player_egg_on_screen
+
 .check_for_laying_player_egg
-    lda $2d
+    lda player_egg_status
 	cmp #3
 	beq perform_plot_player_egg_on_screen
 	cmp #1
@@ -3196,16 +3278,16 @@ perform_plot_player_egg_on_screen
 
 get_screen_coordinates_for_last_segment
 
-    lda player_and_enemy_table,x
-	stx $50
+    lda player_and_enemy_table,x  ;player or enemy snake number of segments
+	stx temp1
 	asl
-	adc player_and_enemy_table,x
-	adc $50
+	adc player_and_enemy_table,x  ;player or enemy snake number of segments
+	adc temp1
 	tax
 	ldy #2
 .get_last_segment_screen_coords_loop
     lda player_and_enemy_table+4,x
-	sta segment_direction_word,y
+	sta screen_coords_table_word,y
 	dex
 	dey
 	bpl .get_last_segment_screen_coords_loop
@@ -3324,7 +3406,7 @@ goto_shift_77_series_bytes
 
 ;-----------------------------------------------------------------------------------
 
-LB2B5
+LB2B5_returns_A_0_or_3
     stx screen_column
 	sty screen_row
 
@@ -3332,21 +3414,21 @@ LB2B5
 .loop_twice_LB2BB
     lda screen_column,x
 	sec
-	sbc frog_location_column,x
+	sbc frog_location_column,x  ;subtracts $41 (frog_location_column), $42 (frog_location_row)
 	bcs @LB2C6
 	eor #255
 	adc #1
 @LB2C6
     cmp #9
-	bcs @LB2D3
+	bcs .set_A_to_3
 	dex
 	bpl .loop_twice_LB2BB
 
-	jsr clear_screen_coordinates
+	jsr clear_block_at_screen_coordinates
 	lda #0
 	rts
 
-@LB2D3
+.set_A_to_3
     lda #3
 	rts
 
@@ -3415,23 +3497,23 @@ handle_frog_actions
 	tax
 	cpx #97
 	bcc @LB2E4
-	lda $2d
+	lda player_egg_status
 	cmp #3
 	bne @LB349
 	ldx player_egg_location_column
 	ldy player_egg_location_row
-	jsr LB2B5
+	jsr LB2B5_returns_A_0_or_3
 	bne @LB349
-	sta $2d
+	sta player_egg_status  ;set to zero
 	sta player_egg_location_column
 @LB349
-    lda $25
+    lda enemy_egg_status
 	cmp #3
 	bne @LB358
 	ldx enemy_egg_location_column
 	ldy enemy_egg_location_row
-	jsr LB2B5
-	sta $25
+	jsr LB2B5_returns_A_0_or_3
+	sta enemy_egg_status  ;is zero or 3
 @LB358
     dec $43
 	beq @LB361
@@ -3488,12 +3570,12 @@ handle_frog_actions
     jsr plot_frog_sprite_on_screen
 	ldx player_egg_location_column
 	ldy player_egg_location_row
-	lda $2d
+	lda player_egg_status
 	cmp #3
 	beq @LB3C8
 	ldx enemy_egg_location_column
 	ldy enemy_egg_location_row
-	lda $25
+	lda enemy_egg_status
 	cmp #3
 	bne @LB3F1
 @LB3C8
@@ -3758,7 +3840,7 @@ scroll_heading_data_lines
 	jsr update_heading
 	ldx #168
 	stx screen_column
-	jsr set_screen_coordinates
+	jsr plot_block_at_screen_coordinates
 	ldx scroll_heading_delay
 	dex
 	dex
@@ -3769,7 +3851,7 @@ scroll_heading_data_lines
 .reset_scroll_delay
     ldx #0
 	stx screen_column
-	jsr set_screen_coordinates
+	jsr plot_block_at_screen_coordinates
 
 ;-----------------------------------------------------------------------------------
 
@@ -4100,10 +4182,10 @@ handle_player_dies
 	lsr
 	lsr
 	jsr dead_snake_animation
-	ldx $4e
+	ldx snake_counter
 	lda data_enemy_snake_table_offsets,x
 	tax
-	lda player_body_segments,x
+	lda player_and_enemy_table,x
 	sta body_segments  ;points to player or enemy snake number of segments
 	lda #1
 	sta snake_colour  ;is 0 for player snake, 1 or 2 for enemy
@@ -4118,7 +4200,7 @@ clear_maze_objects_and_player_loses_life
     jsr clear_maze_objects
 
     ;check if player laid an egg before demise
-	lda $2d
+	lda player_egg_status
 	cmp #3
 	bne .skip_baby_snake
 	jsr start_baby_snake_goes_home
@@ -4230,14 +4312,15 @@ start_baby_snake_goes_home
 	bne .delay_using_X_4_1
 
 	jsr play_sound
+
 	lda #0
-	sta $2d
+	sta player_egg_status  ;set to zero
 
     ; set player snake (baby hatched) coordinates from the baby snake egg coordinates
 	ldx #2
 .apply_egg_coords_loop
-    lda $2a,x
-	sta player_body_segments+5,x
+    lda $2a,x  ;get $2c (player_egg_location_row), $2b (player_egg_location_column), $2a (direction)
+	sta player_and_enemy_table+5,x  ;update $87 (snake head screen row), $86 (snake head screen column), $85 (snake head direction)
 	dex
 	bpl .apply_egg_coords_loop
 
@@ -4341,7 +4424,7 @@ player_or_baby_snake_goes_home_loop
 .move_inside_home_loop
     jsr .goto_perform_player_movement
 	ldx #0
-	jsr get_screen_coordinates_for_last_segment
+	jsr get_screen_coordinates_for_last_segment  ;player snake
 	ldy screen_row
 	cpy #134  ;last segment is beyond home door row?
 	bne .move_inside_home_loop
@@ -4372,7 +4455,7 @@ player_or_baby_snake_goes_home_loop
 	jsr handle_frog_actions
 
     ;player lays an egg going home
-	lda $2d
+	lda player_egg_status
 	cmp #3
 	bne .skip_plot_player_egg_on_screen
 	jsr perform_plot_player_egg_on_screen
@@ -4424,7 +4507,7 @@ player_has_eaten_all_enemy_snakes
 	jsr more_player_and_enemy_snake_interactions
 	lda #0
 	sta snake_colour  ;is 0 for player snake, 1 or 2 for enemy
-	lda player_and_enemy_table
+	lda player_body_segments
 	sta body_segments  ;points to player or enemy snake number of segments
 	lda #7
 	jsr plot_entire_snake_on_screen
@@ -4438,7 +4521,7 @@ player_has_eaten_all_enemy_snakes
 	jsr player_snake_goes_home
 
     ;check if player laid an egg
-	lda $2d
+	lda player_egg_status
 	cmp #3
 	bne .goto_play_one_life
 	jsr start_baby_snake_goes_home
@@ -4456,13 +4539,13 @@ clear_maze_objects
 	stx $1e
 
     ; use each enemy snake segment coordinates and clear each from the screen
-	lda player_and_enemy_table-7,x  ;number of enemy snake body segments
-	sta $51
+	lda enemy_snake_table-7,x  ;number of enemy snake body segments
+	sta temp2
 .clear_one_enemy_snake_on_screen_loop
     jsr get_screen_coordinates_for_sprite
-	jsr clear_screen_coordinates
+	jsr clear_block_at_screen_coordinates
 	jsr add_3_to_point_to_next_segment
-	dec $51
+	dec temp2
 	bne .clear_one_enemy_snake_on_screen_loop
 
 	lda $1e
@@ -4478,14 +4561,15 @@ clear_maze_objects
 	jsr plot_frog_sprite_on_screen  ;will clear frog on screen
 .skip_set_frog_to_clear_on_screen
 
-    lda $25
+    ; clear enemy snake egg
+    lda enemy_egg_status
 	cmp #3
 	bne .clear_maze_objects_end
 	lda enemy_egg_location_column
 	sta screen_column
 	lda enemy_egg_location_row
 	sta screen_row
-	jmp clear_screen_coordinates
+	jmp clear_block_at_screen_coordinates
 
 .clear_maze_objects_end
     rts
