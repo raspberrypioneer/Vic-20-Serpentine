@@ -1,9 +1,9 @@
 ; Serpentine for the Commodore Vic20
 
 ;-----------------------------------------------------------------------------------
-; system addresses
+; System addresses
 
-_CUSTOM_CHARACTERS_ADDR = $1000  ;4096
+_SCREEN_ADDR = $1000  ;4096
 _COLOUR_SCREEN_ADDR = $9600  ;38400
 
 _VIC_SCREEN_LEFT_EDGE = $9000  ;36864 left edge of TV picture
@@ -19,7 +19,7 @@ _VIA_KEYB_ROWS        = $9120  ;37152 port B I/O register
 _VIA_DATADIR_B        = $9122  ;37154 data direction register for port B
 
 ;-----------------------------------------------------------------------------------
-; joystick constants
+; Joystick constants
 
 JOY_RIGHT = 1
 JOY_UP = 2
@@ -28,18 +28,41 @@ JOY_LEFT = 8
 JOY_FIRE = 16
 
 ;-----------------------------------------------------------------------------------
-;Snake direction values
-up = 1
-down = 2
-right = 3
-left = 4
+; Snake direction constants
+
+DIRECTION_UP = 1
+DIRECTION_DOWN = 2
+DIRECTION_RIGHT = 3
+DIRECTION_LEFT = 4
 
 ;-----------------------------------------------------------------------------------
-; zero page addresses
+; Sound voice constants
 
-body_segments = $07
-snake_colour = $08
+SOUND_BASS = 1
+SOUND_ALTO = 2
+SOUND_SOPRANO = 3
+SOUND_NOISE = 4
+
+;-----------------------------------------------------------------------------------
+; Other constants
+
+column_spacing = 176  ;each column is 176 pixels apart (11 rows x 16 pixels high), see _VIC_CR3
+
+;-----------------------------------------------------------------------------------
+; Zero page addresses
+
+bitmap_screen_address_low  = $00
+bitmap_screen_address_high = $01
+
+bitmap_bit_shift = $02  ;is the horizontal bit shift amount (0–7)
+bitmap_spill_bits = $03  ;holds the "spill" bits to be written into the next screen byte when a sprite crosses an 8-bit boundary
+
+body_segments = $07  ;value of snake body segments counting the head as a segment
+snake_colour = $08  ;colour 0: player snake, 1: dangerous enemy snake, 2: weak enemy snake
 snake_direction = $09
+pixel_data_low = $10
+pixel_data_high = $11
+snake_in_home_or_maze = $0a  ;initially #128 (ready to leave home), #255 (reached home), #0 (left home, in maze)
 snake_active_indicator = $0b
 direction_change_indicator = $0c
 maze_part_to_plot = $0d  ;dual use label
@@ -61,6 +84,9 @@ enemy_snake_speed_reload = $1c
 enemy_snake_speed_counter = $1d
 snake_data_pointer = $1e  ;pointer to data in player_and_enemy_table
 
+egg_countdown_low  = $20
+egg_countdown_high = $21
+
 enemy_egg_location_column = $23
 enemy_egg_location_row = $24
 enemy_egg_status = $25  ;0 (no egg), 1 (develop egg), 2 (lay egg), 3 (hatchable egg)
@@ -81,8 +107,8 @@ frog_location_column_word = $0041
 frog_display_duration = $43
 
 snake_index = $4e  ;0, 1, 2
-scroll_heading_position = $46
-scroll_heading_delay = $47
+scroll_message_index = $46
+scroll_X_position = $47
 sound_loop_counter = $48
 end_loop_counter = $49
 
@@ -95,12 +121,21 @@ new_last_segment_pointer = $50  ;dual use label, points to the segment data for 
 temp1 = $50  ;dual use label
 temp2 = $51
 temp3 = $52
+data_index = $5c
 
 sound_hiss_counter = $53
 player_score = $54  ;3 bytes $54, $55, $56
 high_score = $57  ;3 bytes $57, $58, $59
-text_pointer_low = $5d
-text_pointer_high = $5e
+text_data_low = $5d
+text_data_high = $5e
+
+sound_data_low = $5f
+sound_data_high = $60
+zero_digit_control_flag = $62  ;use to check if a score digit is zero to suppress a leading zero in score
+sound_clip_data_pointer_for_channel = $63  ;$63 to $66 is the sound clip data pointer per sound channel
+sound_clip_duration_for_channel = $68  ;$68 to $6b is the sound duration per sound channel
+sound_clip_address_low = $6d  ;low address for sound clip data
+sound_clip_address_high = $72  ;high address for sound clip data
 
 player_and_enemy_table = $80  ;table where player and enemy snake data is held
 player_and_enemy_table_word = $0080  ;table where player and enemy snake data is held (alternate reference)
@@ -113,7 +148,13 @@ snake_2_body_segments = $bd  ;number of body segments
 snake_3_body_segments = $db  ;number of body segments
 
 ;-----------------------------------------------------------------------------------
-; start program, game was originally a cartridge so no basic loader
+; Other storage addresses
+
+scroll_message_store = $0100  ;starting address of the scrolling message text (holds 20 characters)
+
+;-----------------------------------------------------------------------------------
+; Start program, game was originally a cartridge so no basic loader
+
 * = $a000
     ; auto start the program
 	!byte <start_of_program  ;cold start vector (low)
@@ -123,109 +164,66 @@ snake_3_body_segments = $db  ;number of body segments
     !pet "a0CBM"  ;start of signature a0CBM
 
 ;-----------------------------------------------------------------------------------
-; player snake table, data is saved in zero page $80 +
-; see references to zero page data for each snake in player_and_enemy_table, player_and_enemy_table_word
+; Player snake table, data is saved in zero page $80 +
+; See references to zero page data for each snake in player_and_enemy_table, player_and_enemy_table_word
 
-data_zero_page_80_99
+data_player_snake_for_zero_page
     !byte $03  ;player_body_segments
-	!byte $00  ;snake colour number: 0 is blue, 1 is red, 2 is yellow
+	!byte $00  ;snake colour number: 0 is blue
 	!byte $00  ;snake direction
-	!byte $80
+	!byte $80  ;snake in home or maze: #128 (ready to leave home), #255 (reached home), #0 (left home, in maze)
 	!byte $80  ;snake active indicator
 
-    ;snake head coordinates
-	!byte $01  ;segment direction
-	!byte $a6  ;screen column
-	!byte $86  ;screen row
+    ; snake segment direction, screen column, screen row
+    !byte DIRECTION_UP, 166, 134  ;head
+	!byte DIRECTION_UP, 166, 142  ;body segments ...
+	!byte DIRECTION_UP, 166, 150
+	!byte DIRECTION_UP, 166, 158
+	!byte DIRECTION_RIGHT, 166, 166
+	!byte DIRECTION_RIGHT, 158, 166
 
-    ;snake body coordinates
-	!byte $01  ;segment direction
-	!byte $a6  ;screen column
-	!byte $8e  ;screen row
-
-	!byte $01
-	!byte $a6
-	!byte $96
-
-	!byte $01
-	!byte $a6
-	!byte $9e
-
-	!byte $03
-	!byte $a6
-	!byte $a6
-
-	!byte $03
-	!byte $9e
-	!byte $a6
-
-    !byte $aa
-    !byte $aa
-    !byte $aa
-	!byte $aa
-    !byte $aa
-    !byte $aa
-    !byte $aa  ;$9d
+    !byte $aa, $aa, $aa, $aa, $aa, $aa, $aa
 
 ;-----------------------------------------------------------------------------------
-; enemy snake table for each snake, data is saved in zero page $9e + for snake 1, $bc + for snake 2, $da + for snake 3
-; see references to zero page data for each snake in player_and_enemy_table, player_and_enemy_table_word
+; Enemy snake table for each snake, data is saved in zero page locations
+; $9e + for snake 1, $bc + for snake 2, $da + for snake 3
+; See references to zero page data for each snake in player_and_enemy_table, player_and_enemy_table_word
 
-data_zero_page_9e_f7
+data_enemy_snake_for_zero_page
     !byte $3c  ;60 delay for snake to enter cave
 
     ; enemy snake table starts here
 	!byte $06  ;$9f number of enemy snake body segments
-	!byte $01  ;snake colour number: 0 is blue, 1 is red, 2 is yellow
+	!byte $01  ;snake colour number: 1 is red (dangerous), changes to 2 is yellow (weak)
 	!byte $00  ;snake direction
-	!byte $80
+	!byte $80  ;snake in home or maze: #128 (ready to leave home), #255 (reached home), #0 (left home, in maze)
 	!byte $80  ;snake active indicator
 
-    ;snake head coordinates
-	!byte $01  ;segment direction
-	!byte $06  ;screen column
-	!byte $76  ;screen row
+    ; snake segment direction, screen column, screen row
+	!byte DIRECTION_UP, 6, 118  ;head
+	!byte DIRECTION_UP, 6, 126  ;body
+	!byte DIRECTION_UP, 6, 134
+	!byte DIRECTION_UP, 6, 142
+	!byte DIRECTION_UP, 6, 150
+	!byte DIRECTION_UP, 6, 158
 
-    ;snake body coordinates
-	!byte $01  ;segment direction
-	!byte $06  ;screen column
-	!byte $7e  ;screen row
-
-	!byte $01
-	!byte $06
-	!byte $86
-
-	!byte $01
-	!byte $06
-	!byte $8e
-
-	!byte $01
-	!byte $06
-	!byte $96
-
-	!byte $01
-	!byte $06
-	!byte $9e
-
-	!byte $aa
-    !byte $aa
-    !byte $aa
-    !byte $aa
-    !byte $aa
-    !byte $aa  ;$bb, $d9, $f7
+    !byte $aa, $aa, $aa, $aa, $aa, $aa
 
 ;-----------------------------------------------------------------------------------
 
 start_of_program
 
+    ; set initial system state and registers
 	sei
 	lda #2  ;disable restore key interrupt
 	sta _VIC_IRQ_ENABLE
-	jsr initialise_9000_series_and_other_data
+	jsr initialise_system_registers
+
+    ; perform start of game actions
 	lda #1
 	sta current_maze
-	jsr clear_player_and_high_score
-	jsr init_zero_page_with_timers
+	jsr zero_player_and_high_score
+	jsr initialise_pseudo_random_values
 	jsr display_opening_title_screen
 
 start_game_play
@@ -239,7 +237,7 @@ start_game_play
 	stx player_body_segments
 	dex
 	stx $5a
-	jsr clear_player_score
+	jsr zero_player_score
 	lda #1
 	sta current_maze
 
@@ -251,7 +249,7 @@ play_one_life
 	txs
 	jsr clear_all_sound_channels
 	jsr clear_egg_variables
-	jsr clear_512_custom_characters
+	jsr clear_screen_and_add_heading_block
 	jsr initialise_zero_page
 	jsr draw_maze
 	jsr plot_level_and_headings_on_screen
@@ -295,7 +293,7 @@ initialise_zero_page
 
 	ldy #25
 .init_zero_page_loop
-	lda data_zero_page_80_99,y
+	lda data_player_snake_for_zero_page,y
 	sta player_and_enemy_table_word,y  ;initialise all from table
 	dey
 	bne .init_zero_page_loop
@@ -324,7 +322,7 @@ initialise_zero_page
 .init_zero_page_group_of_30
 	ldy #29
 .init_zero_page_30_loop
-	lda data_zero_page_9e_f7,y
+	lda data_enemy_snake_for_zero_page,y
 	sta player_and_enemy_table+30,x  ;initialise all from table
 	dex
 	dey
@@ -451,14 +449,15 @@ set_screen_base_colours
 	rts
 
 ;-----------------------------------------------------------------------------------
-
+;TODO: where is $0200+ data used?
 initialise_0200_onwards_with_increments_of_11
 
-    ; set $0200 to $02f2 with 0, 11, 22, 33, 44 etc to 242
+    ; set $0200 to $02f2 (242 entries) with 0, 11, 22, 33, 44 etc
 	lda #0
 	tay
 	sta $12
 .init_0200_11_times_outer_loop
+
 	ldx #22
 .init_0200_22_times_loop
 	sta $0200,y
@@ -467,165 +466,216 @@ initialise_0200_onwards_with_increments_of_11
 	adc #11
 	dex
 	bne .init_0200_22_times_loop
+
 	inc $12
 	lda $12
-	cmp #11  ;11 times
+	cmp #11  ;11 times (starts at 0)
 	bcc .init_0200_11_times_outer_loop
 	rts
 
 ;-----------------------------------------------------------------------------------
 
-clear_512_custom_characters
+clear_screen_and_add_heading_block
 
-	lda #>_CUSTOM_CHARACTERS_ADDR
-	ldy #<_CUSTOM_CHARACTERS_ADDR
-	sta $01
-	sty $00
+	lda #>_SCREEN_ADDR
+	ldy #<_SCREEN_ADDR
+	sta bitmap_screen_address_high
+	sty bitmap_screen_address_low
 
-	ldx #16  ;8 x 16 pixel character size, also see _VICCR3
+	ldx #16  ;16 pixels high by 8 pixels wide, also see _VIC_CR3
 	ldy #0
 	tya  ;clear the entire character (blank space)
-.clear_custom_char_loop
-	sta ($00),y
+.clear_one_character_loop
+	sta (bitmap_screen_address_low),y
 	iny
-	bne .clear_custom_char_loop
-	inc $01
+	bne .clear_one_character_loop
+	inc bitmap_screen_address_high
 	dex
-	bne .clear_custom_char_loop
+	bne .clear_one_character_loop
 
-block_22_custom_characters
-	lda #>_CUSTOM_CHARACTERS_ADDR
-	ldy #<_CUSTOM_CHARACTERS_ADDR
-	sta $01
-	sty $00
+    ;-------------------------------------------------------------------------------
+    ; draw blocked out characters in the top two lines
+draw_blocked_out_heading_lines
 
-	ldx #22  ;top 2 lines of block characters
-.block_custom_char_X_loop
-	lda #255  ;fill the entire character line making a block space
-	ldy #15  ;8 x 16 pixel character size, also see _VICCR3
-.block_custom_char_Y_loop
-	sta ($00),y
+	lda #>_SCREEN_ADDR
+	ldy #<_SCREEN_ADDR
+	sta bitmap_screen_address_high
+	sty bitmap_screen_address_low
+
+	ldx #22  ;22 characters
+.plot_block_characters_loop
+
+    ; draw a single 16 x 8 block space character
+	lda #255  ;fill the entire character line
+	ldy #15  ;16 pixels high by 8 pixels wide, also see _VIC_CR3
+.plot_one_block_character_loop
+	sta (bitmap_screen_address_low),y
 	dey
-	bpl .block_custom_char_Y_loop
+	bpl .plot_one_block_character_loop
 
-	lda $00
+	lda bitmap_screen_address_low
 	clc
-	adc #176  ;176 (each character is 8 bits in a row of 22 characters)
-	sta $00
+	adc #column_spacing  ;each column is 11 rows x 16 pixels (high) apart
+	sta bitmap_screen_address_low
 	bcc *+4  ;skip high byte update
-	inc $01
+	inc bitmap_screen_address_high
 	dex
-	bne .block_custom_char_X_loop
+	bne .plot_block_characters_loop
 	rts
 
 ;-----------------------------------------------------------------------------------
+; Base low/high bytes for each 8-pixel column on the bitmap screen
+; each column is 176 pixels apart (11 rows x 16 pixels high), see _VIC_CR3
 
-data_screen_bitmap_address_low
-    ; increments each byte by 176 (each character is 8 bits in a row of 22 characters)
+data_bitmap_column_base_low
 	!byte $00, $b0, $60, $10, $c0, $70, $20, $d0
 	!byte $80, $30, $e0, $90, $40, $f0, $a0, $50
 	!byte $00, $b0, $60, $10, $c0, $70
 
-data_screen_bitmap_address_high
+data_bitmap_column_base_high
     !byte $10, $10, $11, $12, $12, $13, $14, $14
 	!byte $15, $16, $16, $17, $18, $18, $19, $1a
 	!byte $1b, $1b, $1c, $1d, $1d, $1e
 
 ;-----------------------------------------------------------------------------------
+; Compute the 8x8 bitmap screen address for the sprite at screen_column/screen_row.
+; screen_column selects the 8-pixel-wide column using a table lookup.
+; screen_row is added as the vertical byte offset from that column base.
+; Result is returned in bitmap_screen_address_low/high.
 
-convert_screen_row_column_to_screen_bitmap_address
+compute_bitmap_screen_address_from_screen_row_column
 
 	lda screen_column
 	tay
-	and #7
-	sta $02
+
+    ; Get the remainder of screen column divided by 8 pixels 
+    ; e.g. if screen column = 141, the remainder (the offset) is 5
+    ; An 8x8 pixel sprite will have 3 pixels in one screen byte (offset is 5) 
+    ; and 5 in the next one
+	and #%00000111  ;7
+	sta bitmap_bit_shift
+
+    ; Convert the column into a number reference in X, with lsr x 3
 	tya
 	lsr
 	lsr
 	lsr
 	tax
-	lda data_screen_bitmap_address_high,x
-	sta $01
-	lda data_screen_bitmap_address_low,x
+
+    ; Use X to find the column base address value (for the top of column) considering
+    ; that a column value is 0 to 21 for the 22 columns on the screen (each spanning 8 pixels) and 
+    ; each column is 176 pixels apart (11 rows x 16 pixels high), see _VIC_CR3
+    ; e.g. column 17 (in X) is at bitmap position 17 x 176 (176 row pixels vertically until the next column)
+    ; giving 2992 ($bb0) added to the VIC screen address location ($1000) is $1bb0
+	lda data_bitmap_column_base_high,x
+	sta bitmap_screen_address_high
+	lda data_bitmap_column_base_low,x
+
+    ; Add the screen_row to complete the screen bitmap address
 	clc
 	adc screen_row
-	sta $00
+	sta bitmap_screen_address_low
 	bcc *+4  ;skip high byte update
-	inc $01
+	inc bitmap_screen_address_high
 	rts
 
 ;-----------------------------------------------------------------------------------
+; Bit blitter for an 8-byte sprite / bitmap
+; Plots the given object on the screen by adding to the bits already present there
+plot_bitmap_on_screen
 
-plot_something_on_screen  ;TODO: completion needed
+	jsr compute_bitmap_screen_address_from_screen_row_column
 
-	jsr convert_screen_row_column_to_screen_bitmap_address
-	ldy #7
-@LA23F
+	ldy #7  ;8 pixel bytes in a sprite / character
+.plot_bitmap_pixels_loop
+
+    ; get pixel byte to plot
 	lda #0
-	sta $03
-	lda ($10),y
-	ldx $02
-	beq @LA24F
-@LA249
-	lsr
-	ror $03
+	sta bitmap_spill_bits  ;assume no spill bits
+	lda (pixel_data_low),y  ;read sprite byte to plot as bitmap
+	ldx bitmap_bit_shift  ;from subroutine above, is screen_column and #7 to shift the sprite bits right by 0..7 pixels
+	beq .write_byte_to_screen_and_handle_spill_into_next_screen_byte
+
+.shift_and_accumulate_spill_bits_loop
+    ; handle where the sprite crosses an 8-bit boundary
+	lsr  ;shift the sprite byte right
+	ror bitmap_spill_bits  ;store the bits that fall off into a temporary byte
 	dex
-	bne @LA249
-@LA24F
-	ora ($00),y
-	sta ($00),y
+	bne .shift_and_accumulate_spill_bits_loop
+
+.write_byte_to_screen_and_handle_spill_into_next_screen_byte
+    ; apply the shifted sprite bits into the current screen byte and store result on screen
+	ora (bitmap_screen_address_low),y  ;add the sprite bits to any already there
+	sta (bitmap_screen_address_low),y
+
+    ; calculate the next screen address using pixel counter in Y
 	tya
-	tax
-	ora #176
+	tax  ;store Y in X for loop later on
+	ora #column_spacing  ;each column is 11 rows x 16 pixels (high) apart
 	tay
-	lda $03
-	beq @LA260
-	ora ($00),y
-	sta ($00),y
-@LA260
+
+    ; plot the spill byte in the next screen address
+	lda bitmap_spill_bits
+	beq .continue_to_next_pixel_byte  ;no spill bits
+	ora (bitmap_screen_address_low),y  ;add the sprite bits to any already there
+	sta (bitmap_screen_address_low),y
+
+.continue_to_next_pixel_byte
 	txa
 	tay
 	dey
-	bpl @LA23F
+	bpl .plot_bitmap_pixels_loop
 	rts
 
 ;-----------------------------------------------------------------------------------
+; Bitmask-based eraser for an 8-byte sprite / bitmap
+; Unplots the given object bits on the screen, thereby clearing it
+erase_bitmap_on_screen
 
-clear_something_on_screen  ;TODO: completion needed
+	jsr compute_bitmap_screen_address_from_screen_row_column
 
-    ;unplot the given object on the screen, thereby clearing it
-	jsr convert_screen_row_column_to_screen_bitmap_address
-	ldy #7
-@LA26B
+	ldy #7  ;8 pixel bytes in a sprite / character
+.clear_bitmap_pixels_loop
+
+    ; get pixel byte to plot
 	lda #255
-	sta $03
-	lda ($10),y
-	eor #255
-	ldx $02
-	beq @LA27E
-@LA277
+	sta bitmap_spill_bits
+	lda (pixel_data_low),y  ;read sprite byte to unplot as bitmap
+	eor #255  ;invert the pixel data (bit flip)
+	ldx bitmap_bit_shift
+	beq .write_erased_byte_to_screen_and_handle_spill_into_next_screen_byte
+
+.rotate_and_accumulate_spill_bits_loop
+    ; handle where the sprite crosses an 8-bit boundary
 	sec
-	ror
-	ror $03
+	ror  ;rotate bits right, carry (is 1) moves to sprite bit 7 and bit 0 is the new carry value
+	ror bitmap_spill_bits  ;rotate bits right, carry (0 or 1) moves to spill bit 7, bit 0 into carry is not used
 	dex
-	bne @LA277
-@LA27E
-	and ($00),y
-	sta ($00),y
+	bne .rotate_and_accumulate_spill_bits_loop
+
+.write_erased_byte_to_screen_and_handle_spill_into_next_screen_byte
+    ; apply the shifted sprite bits into the current screen byte and store result on screen
+	and (bitmap_screen_address_low),y  ;keep only the bits that are not part of the sprite
+	sta (bitmap_screen_address_low),y
+
+    ; calculate the next screen address using pixel counter in Y
 	tya
 	tax
-	ora #176
+	ora #column_spacing  ;each column is 11 rows x 16 pixels (high) apart
 	tay
-	lda $03
-	cmp #255
-	beq @LA291
-	and ($00),y
-	sta ($00),y
-@LA291
+
+    ; unplot the spill byte in the next screen address
+	lda bitmap_spill_bits
+	cmp #255  ;check if spill bits changed from #255
+	beq .progress_to_next_pixel_byte  ;no spill bits
+	and (bitmap_screen_address_low),y  ;keep only the bits that are not part of the sprite
+	sta (bitmap_screen_address_low),y  ;store result on screen
+
+.progress_to_next_pixel_byte
 	txa
 	tay
 	dey
-	bpl @LA26B
+	bpl .clear_bitmap_pixels_loop
 	rts
 
 ;-----------------------------------------------------------------------------------
@@ -861,7 +911,7 @@ move_body_segment_on_screen
 	jsr clear_block_at_screen_coordinates
 	jsr prepare_snake_body_sprite_to_use
 
-update_row_column_and_plot_something_on_screen
+update_row_column_and_plot_bitmap_on_screen
     lda direction_change_indicator
 	beq .skip_direction_change_indicator_update  ;direction change indicator still zero?
 	ldy segment_direction
@@ -869,7 +919,7 @@ update_row_column_and_plot_something_on_screen
 	sty direction_change_indicator
 .skip_direction_change_indicator_update
     jsr update_screen_row_column
-	jsr plot_something_on_screen
+	jsr plot_bitmap_on_screen
 	jsr set_screen_coordinates_for_sprite
 
 add_3_to_point_to_next_segment
@@ -913,9 +963,9 @@ data_head_sprite_addresses_high
 ;-----------------------------------------------------------------------------------
 
 data_directions_right_up
-	!byte right, right, up, up
+	!byte DIRECTION_RIGHT, DIRECTION_RIGHT, DIRECTION_UP, DIRECTION_UP
 data_directions_left_down
-	!byte left, left, down, down
+	!byte DIRECTION_LEFT, DIRECTION_LEFT, DIRECTION_DOWN, DIRECTION_DOWN
 
 ;-----------------------------------------------------------------------------------
 
@@ -923,9 +973,9 @@ prepare_snake_body_sprite_to_use
 
     ldx snake_colour  ;is 0 for player snake, 1 or 2 for enemy
 	lda data_body_sprite_addresses_low,x  ;body sprites are in 3 different colours
-	sta $10
+	sta pixel_data_low
 	lda data_body_sprite_addresses_high,x
-	sta $11
+	sta pixel_data_high
 	rts
 
 ;-----------------------------------------------------------------------------------
@@ -940,9 +990,9 @@ set_snake_head_sprite_to_use_from_direction
 	tax
 
 	lda data_head_sprite_addresses_low-1,x
-	sta $10
+	sta pixel_data_low
 	lda data_head_sprite_addresses_high-1,x
-	sta $11
+	sta pixel_data_high
 	rts
 
 ;-----------------------------------------------------------------------------------
@@ -959,14 +1009,14 @@ handle_player_movement
 ;-----------------------------------------------------------------------------------
 perform_player_or_enemy_snake_movement
 
-    sty $06
-	sty $05
+    sty $06  ;value in snake_data_pointer or #0 (player)
+	sty $05  ;as above
 
 	ldx #0
 	stx direction_change_indicator
 .set_snake_main_variables_loop
     lda player_and_enemy_table_word,y  ;player_and_enemy_table with offset for sprite in Y
-	sta body_segments,x  ;update $0b (snake active indicator), $0a, $09 (snake_direction), $08 (snake_colour), $07 (body_segments)
+	sta body_segments,x  ;update $0b (snake active indicator), $0a (snake_in_home_or_maze), $09 (snake_direction), $08 (snake_colour), $07 (body_segments)
 	iny
 	inx
 	cpx #5
@@ -993,11 +1043,11 @@ perform_player_or_enemy_snake_movement
 .no_snake_direction_change
     jsr check_segment_direction_is_valid
 	bcc .plot_snake_head_for_direction
-	ldy $0a  ;TODO: what is this for?
+	ldy snake_in_home_or_maze
 	bpl .apply_direction_for_enemy_snake
-	ldx $05
+	ldx $05  ;player or enemy snake data table pointer
 	lda #0
-	sta player_and_enemy_table+3,x  ;TODO: what does this do? Becomes $0a
+	sta player_and_enemy_table+3,x  ;update snake in home or maze to #0 (left home, in maze)
 	cpy #128
 	beq .plot_snake_head_for_direction
 	bne .move_in_the_direction  ;always branch
@@ -1026,19 +1076,19 @@ perform_player_or_enemy_snake_movement
 .move_in_the_direction
     lda snake_direction
 	sta direction_change_indicator
-	ldx $05
+	ldx $05  ;player or enemy snake data table pointer
 	lda #0
 	sta player_and_enemy_table+2,x  ;snake direction
 .plot_snake_head_for_direction
     jsr clear_block_at_screen_coordinates
 	jsr set_snake_head_sprite_to_use_from_direction
-	jsr update_row_column_and_plot_something_on_screen
+	jsr update_row_column_and_plot_bitmap_on_screen
 	dec body_segments
 .move_body_segment_loop
     jsr move_body_segment_on_screen
 	dec body_segments
 	bne .move_body_segment_loop
-	ldx $05
+	ldx $05  ;player or enemy snake data table pointer
 	lda #8
 	sec
 	sbc player_and_enemy_table,x
@@ -1069,7 +1119,7 @@ perform_player_or_enemy_snake_movement
 
 .mark_snake_as_left_home_and_active
     lda #0
-	ldx $05
+	ldx $05  ;player or enemy snake data table pointer
 	sta player_and_enemy_table+4,x  ;snake active indicator
 	sec  ;to set the door closed
 .end_perform_movement
@@ -1232,16 +1282,20 @@ enemy_weak_snake_head_left_sprite
 
 ;-----------------------------------------------------------------------------------
 
-initialise_9000_series_and_other_data
+initialise_system_registers
 
+    ; Not apparently needed
     lda #$a4
-	sta $00
+	sta bitmap_screen_address_low
 	lda #$c0
-	sta $01
-	jsr initialise_9000_series_data
+	sta bitmap_screen_address_high
+
+	jsr init_system_registers_and_timers
+
+    ; Not apparently needed
 	lda #2
 	ldy #0
-	sta ($00),y
+	sta (bitmap_screen_address_low),y
 	rts
 
 ;-----------------------------------------------------------------------------------
@@ -1450,24 +1504,24 @@ draw_maze
 	lda #10
 	sta maze_index
 	lda #<data_maze_part_1  ;"any green square on the left a wall"
-	sta $10
+	sta pixel_data_low
 	lda #>data_maze_part_1  ;"any green square on the left a wall"
-	sta $11
+	sta pixel_data_high
 .draw_maze_loop_2
     jsr convert_byte_in_maze_index_to_screen_row_column
-	jsr clear_something_on_screen
+	jsr erase_bitmap_on_screen
 	dec maze_index
 	bpl .draw_maze_loop_2
 
 	lda #10
 	sta maze_index
 	lda #<data_maze_part_2  ;"horizontal wall section"
-	sta $10
+	sta pixel_data_low
 	lda #>data_maze_part_2  ;"horizontal wall section"
-	sta $11
+	sta pixel_data_high
 .draw_maze_loop_3
     jsr convert_byte_in_maze_index_to_screen_row_column
-	jsr plot_something_on_screen
+	jsr plot_bitmap_on_screen
 	dec maze_index
 	bpl .draw_maze_loop_3
 
@@ -1475,12 +1529,12 @@ draw_maze
 	lda #99
 	sta maze_index
 	lda #<data_maze_part_3  ;"vertical wall section with green spare on top"
-	sta $10
+	sta pixel_data_low
 	lda #>data_maze_part_3  ;"vertical wall section with green spare on top"
-	sta $11
+	sta pixel_data_high
 .draw_maze_loop_4
     jsr convert_byte_in_maze_index_to_screen_row_column
-	jsr clear_something_on_screen
+	jsr erase_bitmap_on_screen
 	lda maze_index
 	sec
 	sbc #11
@@ -1488,14 +1542,14 @@ draw_maze
 	bne .draw_maze_loop_4
 
 	lda #<data_maze_part_4  ;"vertical wall section"
-	sta $10
+	sta pixel_data_low
 	lda #>data_maze_part_4  ;"vertical wall section"
-	sta $11
+	sta pixel_data_high
 	lda #99
 	sta maze_index
 .draw_maze_loop_5
     jsr convert_byte_in_maze_index_to_screen_row_column
-	jsr plot_something_on_screen
+	jsr plot_bitmap_on_screen
 	lda maze_index
 	sec
 	sbc #11
@@ -1589,10 +1643,10 @@ data_maze_part_for_X_index
     ; plot maze part on screen for the X value (0, 1, 2)
     stx maze_part_to_plot
 	lda data_maze_parts_low,x
-	sta $10  ;low address of the maze part to plot
+	sta pixel_data_low
 	lda data_maze_parts_high,x
-	sta $11  ;high address of the maze part to plot
-	jsr plot_something_on_screen
+	sta pixel_data_high
+	jsr plot_bitmap_on_screen
 
 	ldx maze_part_to_plot  ;0, 1, 2
 	beq .end_data_maze_part  ;skip plot of additional maze part when X is 0
@@ -1614,13 +1668,13 @@ data_maze_part_for_X_index
 	sta screen_row
 
     ; update the pointers to the next maze data byte and plot that maze part
-	lda $10
+	lda pixel_data_low
 	clc
 	adc #8
-	sta $10
+	sta pixel_data_low
     bcc *+4  ;skip high byte update
-	inc $11
-    jmp plot_something_on_screen
+	inc pixel_data_high
+    jmp plot_bitmap_on_screen
 
 .end_data_maze_part
     rts
@@ -1685,12 +1739,9 @@ convert_screen_row_column_to_byte_in_maze_index
 	rts
 
 ;-----------------------------------------------------------------------------------
+; Called from draw_maze, this function decides which maze graphic piece to draw
 
 get_maze_cell_type
-
-    ; From draw_maze, this function decides which maze graphic piece to draw
-
-
 
     ; convert maze index address value to X and Y
     lda maze_index
@@ -1746,14 +1797,14 @@ open_or_close_snake_entrance_door_with_X_Y_coordinates
     stx screen_column
 	sty screen_row
 	lda #<data_for_snake_entrance_door
-	sta $10
+	sta pixel_data_low
 	lda #>data_for_snake_entrance_door
-	sta $11
-	bcs .goto_plot_something_on_screen_1
-	jmp clear_something_on_screen
+	sta pixel_data_high
+	bcs .goto_plot_bitmap_on_screen_1
+	jmp erase_bitmap_on_screen
 
-.goto_plot_something_on_screen_1
-    jmp plot_something_on_screen
+.goto_plot_bitmap_on_screen_1
+    jmp plot_bitmap_on_screen
 
 ;-----------------------------------------------------------------------------------
 
@@ -1769,48 +1820,56 @@ plot_entire_snake_on_screen_with_prepared_coordinates
     jsr get_screen_coordinates_for_sprite
 	jsr prepare_snake_body_sprite_to_use
 .plot_snake_part_on_screen
-    jsr plot_something_on_screen
+    jsr plot_bitmap_on_screen
 	jsr add_3_to_point_to_next_segment  ;coordinates of next segment
 	dec body_segments  ;points to player or enemy snake number of segments
 	bne .plot_snake_body_loop
 	rts
 
 ;-----------------------------------------------------------------------------------
+; Given the starting screen coordinates and start of text data address, plot the
+; text in the top heading lines on the screen
 
-update_heading
+plot_heading_on_screen
 
     stx screen_column
 	sty screen_row
-	ldy #0
-	sty $5c
-.update_heading_loop
-    jsr plot_block_at_screen_coordinates
-	lda #0
-	sta $11
-	ldy $5c
-	lda (text_pointer_low),y
-	beq .end_update_heading
 
-    ; convert a text character into a reverse character address
+	ldy #0
+	sty data_index
+.plot_heading_loop
+
+    jsr plot_block_at_screen_coordinates
+
+	lda #0
+	sta pixel_data_high
+	ldy data_index
+	lda (text_data_low),y  ;read text data using index
+	beq .end_plot_heading  ;data terminates with a zero
+
+    ; Get the memory address where the bitmap of a digit in A is held, also see plot_A_on_screen
 	sec
 	sbc #64
 
 	ldy #3
 .convert_to_address_loop
     asl
-	rol $11
+	rol pixel_data_high
 	dey
 	bne .convert_to_address_loop
 
-	sta $10
+	sta pixel_data_low
 	lda #128
 	clc
-	adc $11
+	adc pixel_data_high
 
-	jsr plot_A_on_screen_given_screen_position_low_high_bytes
-	inc $5c
-	bne .update_heading_loop
-.end_update_heading
+    ; Plot the pixel data in address pixel_data_low / high and move to the next screen position
+	jsr reverse_plot_pixel_data_and_increment_screen_coords
+
+	inc data_index
+	bne .plot_heading_loop  ;always branch (in this case)
+
+.end_plot_heading
     rts
 
 ;-----------------------------------------------------------------------------------
@@ -1820,10 +1879,10 @@ plot_block_at_screen_coordinates
     ; word in $10, $11 is $8500 (34048) which is a block character (8 bytes of $ff)
     ; $8400 to $87FF (33792 to 33815) is the reversed upper case and graphics area
     lda #0
-	sta $10
+	sta pixel_data_low
 	lda #133  ;$85
-	sta $11
-	jmp plot_something_on_screen
+	sta pixel_data_high
+	jmp plot_bitmap_on_screen
 
 ;-----------------------------------------------------------------------------------
 
@@ -1832,29 +1891,39 @@ clear_block_at_screen_coordinates
     ; word in $10, $11 is $8500 (34048) which is a block character (8 bytes of $ff)
     ; $8400 to $87FF (33792 to 33815) is the reversed upper case and graphics area
     lda #0
-	sta $10
+	sta pixel_data_low
 	lda #133  ;$85
-	sta $11
-	jmp clear_something_on_screen
+	sta pixel_data_high
+	jmp erase_bitmap_on_screen
 
 ;-----------------------------------------------------------------------------------
 
 plot_A_on_screen
 
-    ; determine screen position
+    ; Get the memory address where the bitmap of a digit in A is held
+    ; and store this address in word in $10, $11
+    ; So: 0 is in address $8180 to $8187, 1 is in $8188 to $818f, 
+    ;     2 is in $8190 to $8197, ... 9 is in $81c8 to $81cf
+    ; Example: if A = 2, asl x 3, ora #128, A = 144 ($90) giving the low byte bitmap address
+    ; The high byte is always $81, so the complete address is $8190
+
     asl
 	asl
 	asl
-	ora #128
-	sta $10
-	lda #129
+	ora #%10000000  ;128
+	sta pixel_data_low
+	lda #129  ;$81
 
 ;-----------------------------------------------------------------------------------
 
-plot_A_on_screen_given_screen_position_low_high_bytes
+reverse_plot_pixel_data_and_increment_screen_coords
 
-    sta $11
-	jsr clear_something_on_screen  ;this unplots the value in A on the screen, which displays it in reverse
+    sta pixel_data_high
+
+    ; unplot the pixel data on the blocked out heading lines making it appear reversed
+	jsr erase_bitmap_on_screen
+
+    ; update the screen column
 	lda screen_column
 	clc
 	adc #8
@@ -1883,20 +1952,20 @@ data_level_heading
 plot_level_and_headings_on_screen
 
     lda #<data_score_heading
-	sta text_pointer_low
+	sta text_data_low
 	lda #>data_score_heading
-	sta text_pointer_high
+	sta text_data_high
 	ldx #4
 	ldy #0
-	jsr update_heading
+	jsr plot_heading_on_screen
 
 	lda #<data_level_heading
-	sta text_pointer_low
+	sta text_data_low
 	lda #>data_level_heading
-	sta text_pointer_high
+	sta text_data_high
 	ldx #4
 	ldy #8
-	jsr update_heading
+	jsr plot_heading_on_screen
 
 	lda #48
 	sta screen_column
@@ -1919,16 +1988,17 @@ plot_level_and_headings_on_screen
 	jmp plot_A_on_screen
 
 ;-----------------------------------------------------------------------------------
+; Initialise player and high score
 
-clear_player_and_high_score
+zero_player_and_high_score
 
     ldx #5
-clear_player_score
+zero_player_score
     lda #0
-.clear_player_score_loop
+.zero_player_score_loop
     sta player_score,x
 	dex
-	bpl .clear_player_score_loop
+	bpl .zero_player_score_loop
 	rts
 
 ;-----------------------------------------------------------------------------------
@@ -1964,7 +2034,7 @@ update_player_score
 
 ;-----------------------------------------------------------------------------------
 
-plot_player_score_on_screen  ;TODO: completion needed
+plot_player_score_on_screen
 
     ldx #0
 	lda #0
@@ -1972,48 +2042,54 @@ plot_player_score_on_screen  ;TODO: completion needed
 plot_score_on_screen
     sty screen_column
 	sta screen_row
-	lda #3
+	lda #3  ;3 score bytes
 	sta $61
-	lda #128
-	sta $62
-.check_score_bytes_loop
+	lda #128  ;bit 7 is on
+	sta zero_digit_control_flag  ;used to prevent score with a leading zero digit being displayed e.g. 04500
+.plot_each_score_byte_loop
     lda player_score,x
-	bne .score_byte_is_not_zero
+	bne .plot_score_digits
 	inx
 	dec $61
-	bne .check_score_bytes_loop
+	bne .plot_each_score_byte_loop
 	rts
 
-.score_byte_is_not_zero
-    stx $5c
-@LAA45
-    ldx $5c
+.plot_score_digits
+    ; The score bytes are calculated and stored in decimal mode (with the sed instruction)
+    ; which means for example, a score of 32500 will be held as bytes $03, $25, $00
+    ; Consider the second byte $25 broken down into first digit A = 2, and second digit A = 5
+    ; with each digit plotted on screen via plot_A_on_screen. The same applies to the other bytes
+
+    ; break each score byte into the digits to plot on screen
+    stx data_index
+.plot_each_score_digit_loop
+    ldx data_index
 	lda player_score,x
-	pha
-	and #240
-	bne @LAA56
-	bit $62
-	bpl @LAA56
-	asl $62
-	beq @LAA64
-@LAA56
-    asl $62
+	pha  ;put the score on the stack
+	and #%11110000  ;240 mask off the nibble with the first digit
+	bne .plot_first_score_digit
+	bit zero_digit_control_flag  ;score digit is zero, check zero digit flag
+	bpl .plot_first_score_digit  ;branch if bit 7 is off, ok to plot zero digit
+	asl zero_digit_control_flag  ;bit 7 is off
+	beq .plot_second_score_digit  ;the zero digit flag is off, first digit is skipped and second one is plotted
+.plot_first_score_digit
+    asl zero_digit_control_flag  ;bit 7 is off
 	lsr
 	lsr
 	lsr
-	lsr
-	pha
-	jsr plot_block_at_screen_coordinates
-	pla
+	lsr  ;lsr x 4 to convert the first digit into A in range 0 to 9
+	pha  ;temporarily store A on stack
+	jsr plot_block_at_screen_coordinates  ;plot a block so that the score digit can be 'unplotted' on top of it (appears reversed)
+	pla  ;get A back off the stack for plotting
 	jsr plot_A_on_screen
-@LAA64
-    jsr plot_block_at_screen_coordinates
-	pla
-	and #15
+.plot_second_score_digit
+    jsr plot_block_at_screen_coordinates  ;plot a block so that the score digit can be 'unplotted' on top of it (appears reversed)
+	pla  ;get the score off the stack
+	and #%00001111  ;15 mask off the nibble with the second digit to get A in range 0 to 9
 	jsr plot_A_on_screen
-	inc $5c
+	inc data_index
 	dec $61
-	bne @LAA45
+	bne .plot_each_score_digit_loop
 	rts
 
 ;-----------------------------------------------------------------------------------
@@ -2083,39 +2159,49 @@ update_player_loses_life
 
 ;-----------------------------------------------------------------------------------
 
-play_sounds  ;TODO: completion needed
+play_sounds
+
+    ; For each channel, find if there is a sound to play and play it for the duration
+    ; in the sound data. A duration value of 0 performs sound set-up where the actual
+    ; sound duration is set and note is played. This note continues until duration is
+    ; 0 again which goes onto set-up the next duration and plays the next note.
+    ; When duration is #255, the sound on the channel is cleared and stopped.
+    ;
+    ; Sound clip data is organised:
+    ;   Repeating 2 bytes of duration, frequency (note), with duration = #255 to end
 
     ldx #4
 .play_sounds_loop
-    lda $6c,x
-	sta $5f
-	lda $71,x
-	sta $60
-	ldy $62,x
-	lda $67,x
-	beq @LAADA
+    lda sound_clip_address_low-1,x  ;sound clip data address low for sound channel
+	sta sound_data_low
+	lda sound_clip_address_high-1,x  ;sound clip data address high for sound channel
+	sta sound_data_high
+	ldy sound_clip_data_pointer_for_channel-1,x  ;initially 254 from prepare_sound_data
+	lda sound_clip_duration_for_channel-1,x  ;initially 0 from prepare_sound_data, #255 from clear_all_sound_channels
+	beq .play_sound_on_channel
 	cmp #255  ;end of sound
-	bne @LAAEF
+	bne .continue_sound_and_decrease_duration_counter
 .clear_sound_channel
     lda #0
 	sta _VIC_SOUND_BASS-1,x
-	beq .next_sound_channel
+	beq .next_sound_channel  ;always branch
 
-@LAADA
+.play_sound_on_channel
     iny
-	iny
-	lda ($5f),y
-	beq @LAADA
-	sta $67,x
-	cmp #255  ;end of sound
+	iny  ;Y when 254 initially becomes 0
+	lda (sound_data_low),y  ;sound clip duration
+	beq .play_sound_on_channel
+
+	sta sound_clip_duration_for_channel-1,x  ;store sound duration on channel
+	cmp #255  ;end of sound when #255
 	beq .clear_sound_channel
 	tya
-	sta $62,x
-	iny
-	lda ($5f),y
+	sta sound_clip_data_pointer_for_channel-1,x  ;update data pointer to point to the next duration data position
+	iny  ;point to the sound frequency
+	lda (sound_data_low),y  ;get sound frequency and play it on channel
 	sta _VIC_SOUND_BASS-1,x
-@LAAEF
-    dec $67,x
+.continue_sound_and_decrease_duration_counter
+    dec sound_clip_duration_for_channel-1,x  ;decrease the duration of the sound being played on channel
 .next_sound_channel
     dex
 	bne .play_sounds_loop
@@ -2125,36 +2211,58 @@ play_sounds  ;TODO: completion needed
 
 prepare_sound_data
 
-    stx $5f
-	sty $60
+    ; Use the given sound address table (low high in X Y) to prepare zero page addresses
+    ; with the starting addresses of sound clip data (where sound duration and frequencies are)
+    ;
+    ; For each sound, the sound address table data is organised:
+    ;   3 bytes for sound channel, sound clip address low, high
+    ;   repeating per channel until #255 is reached to close the sound setup
+    ;
+    ; In zero page the sound channel addresses for playing the sound clip data are:
+    ;   $6d to $70 sound clip address low for _VIC_SOUND_BASS / ALTO / SOPRANO / NOISE
+    ;   $72 to $75 sound clip address high for _VIC_SOUND_BASS / ALTO / SOPRANO / NOISE
+    ;
+    ; The initial sound duration and data pointers are also set:
+    ;   $68 to $6b = 0 is the sound duration per sound channel
+    ;   $63 to $66 = 254 is the sound clip data pointer per sound channel
+
+    stx sound_data_low
+	sty sound_data_high
 	ldy #0
 .init_sound_data_loop
-    lda ($5f),y
+
+    lda (sound_data_low),y
 	cmp #255  ;end of sound
-	beq .end_data_byte_reached
-	tax
+	beq .end_of_sound_data_byte_reached
+	tax  ;first byte is the sound channel (1 to 4) and used as the zero page offset
+
 	iny
-	lda ($5f),y
-	sta $6c,x
+	lda (sound_data_low),y
+	sta sound_clip_address_low-1,x
+
 	iny
-	lda ($5f),y
-	sta $71,x
+	lda (sound_data_low),y
+	sta sound_clip_address_high-1,x
+
 	lda #0
-	sta $67,x
+	sta sound_clip_duration_for_channel-1,x
+
 	lda #254
-	sta $62,x
+	sta sound_clip_data_pointer_for_channel-1,x
+
 	iny
 	bne .init_sound_data_loop
-.end_data_byte_reached
+
+.end_of_sound_data_byte_reached
     rts
 
 ;-----------------------------------------------------------------------------------
 
 data_clear_all_sound_channels
-	!byte $01, <data_sound_end, >data_sound_end
-    !byte $02, <data_sound_end, >data_sound_end
-    !byte $03, <data_sound_end, >data_sound_end
-    !byte $04, <data_sound_end, >data_sound_end
+    !byte SOUND_BASS, <data_sound_end, >data_sound_end
+    !byte SOUND_ALTO, <data_sound_end, >data_sound_end
+    !byte SOUND_SOPRANO, <data_sound_end, >data_sound_end
+    !byte SOUND_NOISE, <data_sound_end, >data_sound_end
 data_sound_end
     !byte $ff
 
@@ -2206,8 +2314,11 @@ perform_snake_entrance
 ;-----------------------------------------------------------------------------------
 
 data_directions
-	!byte down, up, left, right
-data_to_compare_to_hex_77
+	!byte DIRECTION_DOWN, DIRECTION_UP, DIRECTION_LEFT, DIRECTION_RIGHT
+
+;-----------------------------------------------------------------------------------
+
+data_random_state_comparison_values
 	!byte 50, 80, 110, 140, 170, 190, 210, 225, 240, 250
 
 ;-----------------------------------------------------------------------------------
@@ -2279,20 +2390,20 @@ continue_apply_direction_for_enemy_snake  ;TODO: completion needed
 .continue_enemy_snake_direction
     bit maze_cell_boundary_flag
 	bmi .end_enemy_snake_direction  ;not at a point in maze cell to check for a direction change
-	jsr shift_77_series_bytes
+	jsr advance_random_state  ;pseudo-random value in A
 	cmp #128
 	bcc .end_enemy_snake_direction
-	jsr shift_77_series_bytes
+	jsr advance_random_state  ;pseudo-random value in A
 
 	ldy current_maze
 	cpy #11
 	bcc .use_current_maze_for_Y
 	ldy #10  ;limit Y if maze number is too big
 .use_current_maze_for_Y
-    cmp data_to_compare_to_hex_77-1,y
+    cmp data_random_state_comparison_values-1,y
 	bcc @LABED
 @LABDA
-    jsr shift_77_series_bytes
+    jsr advance_random_state  ;pseudo-random value in A
 	and #%00000011  ;3
 	clc
 	adc #1
@@ -2305,86 +2416,95 @@ continue_apply_direction_for_enemy_snake  ;TODO: completion needed
 
 @LABED
     lda segment_direction
-	cpx #down
-	beq @LAC20
+	cpx #2  ;2 is weak enemy snake
+	beq .move_toward_player_egg
 	bit $77
 	bpl @LAC0B
 @LABF7
-    ldx #up
+    ldx #DIRECTION_UP
 	ldy screen_row
     cpy player_body_segments+7  ;snake head row
 	beq @LAC0B
-	bcs @LAC03
-	ldx #2
-@LAC03
+	bcs .save_snake_direction
+	ldx #DIRECTION_DOWN
+.save_snake_direction
     cmp data_directions-1,x
 	beq *+4  ;skip next instruction
 	stx snake_direction  ;down, up, left, right
     rts
 
 @LAC0B
-    ldx #left
+    ldx #DIRECTION_LEFT
 	ldy screen_column
 	cpy player_body_segments+6  ;snake head column
 	beq @LAC19
-	bcs @LAC03
-	ldx #right
-	bne @LAC03
+	bcs .save_snake_direction
+	ldx #DIRECTION_RIGHT
+	bne .save_snake_direction  ;always branch
 
 @LAC19
     ldy screen_row
 	cpy player_body_segments+7  ;snake head row
 	bne @LABF7
-@LAC1F
+.exit_enemy_snake_direction
     rts
 
-@LAC20
-    ldx #right
+.move_toward_player_egg
+    ldx #DIRECTION_RIGHT
 	ldy player_egg_location_column
 	beq @LABDA
 	cpy screen_column
-	beq @LAC30
-	bcs @LAC03
-	ldx #left
-	bne @LAC03
+	beq .check_egg_vertical_position  ;check 
+	bcs .save_snake_direction
+	ldx #DIRECTION_LEFT
+	bne .save_snake_direction  ;always branch
 
-@LAC30
-    ldx #down
+.check_egg_vertical_position
+    ldx #DIRECTION_DOWN
 	ldy player_egg_location_row
 	cpy screen_row
-	beq @LAC1F
-	bcs @LAC03
-	ldx #up
-	bne @LAC03  ;always branch
+	beq .exit_enemy_snake_direction  ;keep current direction
+	bcs .save_snake_direction  ;save new down direction
+	ldx #DIRECTION_UP  ;switch to up direction
+	bne .save_snake_direction  ;always branch
 
 ;-----------------------------------------------------------------------------------
+;   Pseudo-random number generator 
+;   Used for frog placement, enemy decisions, egg/timer variation, etc.
+;   Updates the 4-byte pseudo-random state in zero page $77..$7a
 
-shift_77_series_bytes
-    stx $7c
+advance_random_state
+
+    stx $7c  ;save X
+
+    ; re-calculate new $77 = old $77 + old $7a + old $7b
 	lda $77
 	sec
 	adc $7a
 	adc $7b
 	sta $77
 
+    ; rotate the old bytes through $78..$7b
 	ldx #3
-.shift_77_series_bytes_4_times_loop
+.advance_random_state_loop
     lda $77,x  ;$7a, $79, $78, $77
 	sta $78,x  ;$7b, $7a, $79, $78
 	dex
-	bpl .shift_77_series_bytes_4_times_loop
-	ldx $7c
+	bpl .advance_random_state_loop
+
+    ; leaves A as the old $7a value
+	ldx $7c  ; restore X
 	rts
 
 ;-----------------------------------------------------------------------------------
+; Initialise pseudo-random starting values
 
-init_zero_page_with_timers
+initialise_pseudo_random_values
 
     lda $9114  ;timer
 	sta $78
 	lda $9124  ;timer
 	sta $7a
-
 	lda #139
 	sta $77
 	sta $79
@@ -2515,10 +2635,10 @@ dead_snake_animation
 	bcc .skip_to_next_segment
 	tax
 	lda dead_snake_part_address_low-2,x
-	sta $10
+	sta pixel_data_low
 	lda dead_snake_part_address_high-2,x
-	sta $11
-	jsr plot_something_on_screen
+	sta pixel_data_high
+	jsr plot_bitmap_on_screen
 .skip_to_next_segment
     jsr add_3_to_point_to_next_segment
 	dec body_segments
@@ -2712,7 +2832,7 @@ handle_player_and_enemy_snake_interactions
 	ldx #31  ;point to first snake table data
 	txa
 .check_each_enemy_for_eaten_segments_loop
-    sta $05
+    sta $05  ;player or enemy snake data table pointer
 	stx snake_data_pointer
 	lda enemy_snake_table-1,x  ;delay for snake to enter cave
 	bne .exit_check_for_eaten_segments
@@ -2778,7 +2898,7 @@ handle_player_and_enemy_snake_interactions
 
 .continue_to_next_snake
     inc $7c
-	lda $05
+	lda $05  ;player or enemy snake data table pointer
 	clc
 	adc #30  ;offset to next snake data
 	tax
@@ -2954,10 +3074,12 @@ handle_player_and_enemy_snake_interactions
 	cmp player_body_segments
 	bcc .enemy_snake_is_smaller_than_player
 	lda #1  ;red colour snake
-	!byte $2c  ; odd - an error? $2c is the bit (absolute) instruction
-               ; so this part could read lda #1  bit $02a9  sta enemy_snake_table+1,x
-               ; the bit instruction is spurious and has no effect
-
+	!byte $2c  ; $2c is the bit (absolute) opcode
+    ; This an intentional technique / trick and gives the code here two 'meanings'
+    ; Meaning 1: when lda #1 is reached, the next instructions are bit $02A9 and sta enemy_snake_table+1,x ...
+    ;            the bit instruction is meaningless but the next statement sta enemy_snake_table+1,x means #1 is stored
+    ; Meaning 2: when the .enemy_snake_is_smaller_than_player branch is taken, the next instructions are
+    ;            lda #2 and sta enemy_snake_table+1,x ... (leaving $2c the bit opcode 'stranded') and means #2 is stored
 .enemy_snake_is_smaller_than_player
     lda #2  ;change to weak green colour snake
 	sta enemy_snake_table+1,x  ;enemy snake colour number
@@ -3046,19 +3168,22 @@ clear_egg_variables
 	rts
 
 ;-----------------------------------------------------------------------------------
+; Set 16-bit egg countdown timer used for enemy / player egg state changes
+; Used to delay enemy/player egg state changes (develop / lay / hatch)
 
-update_hex_20_21_using_timer
+set_egg_countdown_timer
 
+    ; build a new 16-bit egg countdown in $21:$20
     lda #1
 	lsr $9124  ;timer least significant byte (LSB) of count move to carry
 	bcc .timer_carry_is_clear
 	lda #0
 .timer_carry_is_clear
-    sta $21
-	jsr shift_77_series_bytes
+    sta egg_countdown_high  ;set to 0 or 1 from the VIC timer LSB
+	jsr advance_random_state  ;pseudo-random value in A
 	and #%00111111  ;63
 	ora #%00001111  ;15
-	sta $20
+	sta egg_countdown_low  ;set to a pseudo-random value in the range 15..63
 	rts
 
 ;-----------------------------------------------------------------------------------
@@ -3066,16 +3191,16 @@ update_hex_20_21_using_timer
 clear_developing_egg_sprite
 
     lda #<developing_egg_sprite
-	sta $10
+	sta pixel_data_low
 	lda #>developing_egg_sprite
-	sta $11
-	jmp clear_something_on_screen
+	sta pixel_data_high
+	jmp erase_bitmap_on_screen
 
 ;-----------------------------------------------------------------------------------
 
 update_egg_timers
 
-    jsr shift_77_series_bytes
+    jsr advance_random_state  ;pseudo-random value in A
 	pha
 	ora #%00111111  ;63
 	sta $28
@@ -3144,7 +3269,7 @@ handle_player_and_enemy_snake_eggs
     ; develop a new egg
 	stx enemy_snake_with_egg  ;0, 1, 2
 	inc enemy_egg_status  ;status is 1 (develop egg)
-	jsr update_hex_20_21_using_timer
+	jsr set_egg_countdown_timer
 
 .goto_perform_player_egg_actions
     jmp perform_player_egg_actions
@@ -3163,9 +3288,9 @@ handle_player_and_enemy_snake_eggs
 
 perform_enemy_snake_egg_actions
 
-    dec $20
+    dec egg_countdown_low
 	bne .check_egg_status_for_next_actions
-	dec $21
+	dec egg_countdown_high
 	bpl .check_egg_status_for_next_actions
 	cpy #3  ;check if enemy_egg_status = 3 (hatchable egg)
 	bne .egg_not_hatchable
@@ -3212,7 +3337,7 @@ perform_enemy_snake_egg_actions
 	bne .egg_is_laid_and_detaches_from_mother_snake
 
     ; egg status is 1 (develop egg)
-	jsr update_hex_20_21_using_timer
+	jsr set_egg_countdown_timer
 	inc enemy_egg_status  ;update 1 (develop egg) to 2 (lay egg)
 	bne .point_to_last_segment_with_egg  ;always branch
 
@@ -3224,14 +3349,14 @@ perform_enemy_snake_egg_actions
 	jsr get_screen_coordinates_for_last_segment  ;enemy snake
 	jsr check_if_screen_coords_are_on_8_pixel_boundary
 	bne .mother_snake_lays_egg  ;not on 8 pixel boundary
-	inc $21
-	inc $20
+	inc egg_countdown_high
+	inc egg_countdown_low
 	bne .check_egg_status_for_next_actions  ;always branch
 
 .mother_snake_lays_egg
 
     ; detach egg from mother snake, is hatchable now
-    jsr update_hex_20_21_using_timer
+    jsr set_egg_countdown_timer
 	inc enemy_egg_status  ;update 2 (lay egg) to 3 (hatchable egg)
 	ldy enemy_snake_with_egg
 	ldx data_enemy_snake_table_offsets,y
@@ -3309,10 +3434,10 @@ perform_enemy_snake_egg_actions
     ; clear the developing egg and plot a laid egg
     jsr clear_developing_egg_sprite
 	lda #<enemy_snake_egg_sprite
-	sta $10
+	sta pixel_data_low
 	lda #>enemy_snake_egg_sprite
-	sta $11
-	jsr plot_something_on_screen
+	sta pixel_data_high
+	jsr plot_bitmap_on_screen
 
 ;-----------------------------------------------------------------------------------
 
@@ -3444,10 +3569,10 @@ perform_plot_player_egg_on_screen
 .plot_player_egg_on_screen
     jsr clear_developing_egg_sprite
 	lda #<player_snake_egg_sprite
-	sta $10
+	sta pixel_data_low
 	lda #>player_snake_egg_sprite
-	sta $11
-	jmp plot_something_on_screen
+	sta pixel_data_high
+	jmp plot_bitmap_on_screen
 
 ;-----------------------------------------------------------------------------------
 
@@ -3573,8 +3698,8 @@ set_frog_to_display_on_screen
 
     lda #%10000000  ;128
 	sta frog_display
-goto_shift_77_series_bytes
-    jsr shift_77_series_bytes
+goto_advance_random_state
+    jsr advance_random_state  ;pseudo-random value in A
 	and #%01111111  ;127
 	ora #%00011111  ;31
 	sta frog_display_duration
@@ -3721,12 +3846,12 @@ handle_frog_actions
 	ldy #>data_frog_ribbit_sound_clip
 	jsr prepare_sound_data
 
-	jsr goto_shift_77_series_bytes
+	jsr goto_advance_random_state
 	bit frog_display
 	bpl .check_for_hatchable_egg_for_frog_to_eat
 
 	asl frog_display  ;clear bit 7
-	jsr shift_77_series_bytes
+	jsr advance_random_state  ;pseudo-random value in A
 	ldy #20
 	ldx #4
 	and #3
@@ -3738,7 +3863,7 @@ handle_frog_actions
 .hex_77_is_zero
     sty frog_location_row
 	stx $44
-	jsr shift_77_series_bytes
+	jsr advance_random_state  ;pseudo-random value in A
 	and #112
 	clc
 	adc #20
@@ -3755,7 +3880,7 @@ handle_frog_actions
 	ldy #2
     stx frog_location_column
 	sty $44
-	jsr shift_77_series_bytes
+	jsr advance_random_state  ;pseudo-random value in A
 	and #48
 	clc
 	adc #20
@@ -3808,7 +3933,7 @@ handle_frog_actions
 
 .no_hatchable_egg_for_frog_to_eat
     ldy #255
-	jsr shift_77_series_bytes
+	jsr advance_random_state  ;pseudo-random value in A
 	cmp #85
 	bcc .calculate_frog_column_row_increment_pointer
 	iny
@@ -3843,10 +3968,12 @@ handle_frog_actions
 	sta frog_location_row
 .goto_start_plot_frog
     lda #0
-	!byte $2c  ; odd - an error? $2c is the bit (absolute) instruction
-               ; so this part could read lda #0  bit $80a9  sta $45
-               ; the bit instruction is spurious and has no effect
-
+	!byte $2c  ; $2c is the bit (absolute) opcode
+    ; This an intentional technique / trick and gives the code here two 'meanings'
+    ; Meaning 1: when lda #0 is reached, the next instructions are bit $80a9 and sta $45 ...
+    ;            the bit instruction is meaningless but the next statement sta $45 means #0 is stored
+    ; Meaning 2: when the plot_frog_sprite_on_screen branch is taken, the next instructions are
+    ;            lda #128 and sta $45 ... (leaving $2c the bit opcode 'stranded') and means #128 is stored
 plot_frog_sprite_on_screen
     lda #128
 	sta $45
@@ -3856,52 +3983,52 @@ plot_frog_sprite_on_screen
 	sta screen_row
 	lda #<data_frog_top_left
 	ldx #>data_frog_top_left
-	jsr .goto_prepare_and_plot_something_on_screen
+	jsr .goto_prepare_and_plot_bitmap_on_screen
 	lda screen_column
 	clc
 	adc #8
 	sta screen_column
 	lda #<data_frog_top_right
 	ldx #>data_frog_top_right
-	jsr .goto_prepare_and_plot_something_on_screen
+	jsr .goto_prepare_and_plot_bitmap_on_screen
 	lda screen_row
 	clc
 	adc #8
 	sta screen_row
 	lda #<data_frog_bottom_right
 	ldx #>data_frog_bottom_right
-	jsr .goto_prepare_and_plot_something_on_screen
+	jsr .goto_prepare_and_plot_bitmap_on_screen
 	lda screen_column
 	sec
 	sbc #8
 	sta screen_column
 	lda #<data_frog_bottom_left
 	ldx #>data_frog_bottom_left
-.goto_prepare_and_plot_something_on_screen
-    sta $10
-	stx $11
+.goto_prepare_and_plot_bitmap_on_screen
+    sta pixel_data_low
+	stx pixel_data_high
 	bit $45
-	bpl .goto_plot_something_on_screen_2
-	jmp clear_something_on_screen
+	bpl .goto_plot_bitmap_on_screen_2
+	jmp erase_bitmap_on_screen
 
-.goto_plot_something_on_screen_2
-    jmp plot_something_on_screen
+.goto_plot_bitmap_on_screen_2
+    jmp plot_bitmap_on_screen
 
 ;-----------------------------------------------------------------------------------
 
-data_9000_to_900f_values
+data_vic_system_registers
     !byte %00001100  ;_VIC_SCREEN_LEFT_EDGE = $9000  ;36864 bits 0-6 horizontal centering, bit 7 sets interlace scan
 	!byte %00100110  ;_VIC_SCREEN_TOP_EDGE = $9001  ;36865 vertical centering
 	!byte %10010110  ;_VIC_CR2 = $9002  ;36866, used for setting number of columns displayed
-                     ;  bit 7: see _VICCR5 below
+                     ;  bit 7: see _VIC_CR5 below
                      ;  bit 6-0: 22 means 22 characters per column
 	!byte %00010111  ;_VIC_CR3 = $9003  ;36867, used for setting number of rows displayed
                      ;  bit 7: raster beam location bit 0 (n/a here)
-                     ;  bit 6-1: 22 means 11 character lines
-                     ;  bit 0: 1 for 8 x 16 pixel character size
+                     ;  bit 6-1: 22 means 11 character lines / rows
+                     ;  bit 0: 1 tall characters (16 pixels high by 8 pixels wide)
 	!byte 0  ;_VIC_CR4 = $9004  ;36868, raster beam location bits (n/a here)
-	!byte %10001100  ;_VIC_CR5 = $9005  ;36869, used for setting custom characters location
-                     ;  bit 7-4: 1000 + _VICCR2 bit 7 (is 1) means screen is located at $somewhere (decimal), and colour map at $9600 (38400)
+	!byte %10001100  ;_VIC_CR5 = $9005  ;36869, used for setting custom characters location (n/a here)
+                     ;  bit 7-4: 1000 + _VIC_CR2 bit 7 (is 1) means screen is located at $1000 (decimal), and colour map at $9600 (38400)
                      ;  bit 3-0: 1100 means character map is located at $1000 (4096)
 	!byte 0  ;_VIC_CR6 = $9006  ;36870  light pen horizontal screen location (n/a here)
 	!byte 0  ;_VIC_CR7 = $9007  ;36871  light pen vertical screen location (n/a here)
@@ -3918,12 +4045,14 @@ data_9000_to_900f_values
                      ;  bit 3-0 is 14 for blue border
 
 ;-----------------------------------------------------------------------------------
+; Initialise Vic system registers and timers
 
-initialise_9000_series_data
+init_system_registers_and_timers
+
     ldy #15
 .init_data_loop
-    lda data_9000_to_900f_values,y
-	sta $9000,y
+    lda data_vic_system_registers,y
+	sta $9000,y  ;store in $9000 to $900f
 	dey
 	bpl .init_data_loop
 
@@ -4022,63 +4151,81 @@ data_scrolling_heading_message
 
 ;-----------------------------------------------------------------------------------
 
-draw_scroll_heading_line
+prepare_scroll_message
 
-    lda #0
-	sta text_pointer_low
-	lda #1
-	sta text_pointer_high
+    ; set the message storage area and initial index
+    lda #<scroll_message_store
+	sta text_data_low
+	lda #>scroll_message_store
+	sta text_data_high
+
 	lda #255
-	sta scroll_heading_position
-	bne scroll_data_line  ;always branch
+	sta scroll_message_index
 
-scroll_heading_data_lines
+    ; store the first part of the scroll message
+	bne .store_scroll_message_line  ;always branch
 
-    ldx scroll_heading_delay
+;-----------------------------------------------------------------------------------
+
+display_scroll_message
+
+    ldx scroll_X_position
 	ldy #8
-	jsr update_heading
+	jsr plot_heading_on_screen  ;uses the scroll_message_store for the heading scroll message
+
 	ldx #168
 	stx screen_column
 	jsr plot_block_at_screen_coordinates
-	ldx scroll_heading_delay
+
+    ; move the screen position on 2 pixels
+	ldx scroll_X_position
 	dex
 	dex
-	beq .reset_scroll_delay
-	stx scroll_heading_delay
+	beq .prepare_more_scroll_data_for_message  ;8 bits has been scrolled, get next message characters (line)
+	stx scroll_X_position
 	rts
 
-.reset_scroll_delay
+.prepare_more_scroll_data_for_message
+
     ldx #0
 	stx screen_column
 	jsr plot_block_at_screen_coordinates
 
-;-----------------------------------------------------------------------------------
-
-scroll_data_line
+    ;-------------------------------------------------------------------------------
+    ; store 20 characters of the message line in the scroll_message_store
+    ; starting from the last index position to display later via display_scroll_message
+.store_scroll_message_line
 
     ldx #8
-	stx scroll_heading_delay
+	stx scroll_X_position
 	ldy #0
-	ldx scroll_heading_position
+	ldx scroll_message_index
 	inx
 	cpx #73  ;length of scroll message
-	bcc .scroll_message_not_ended
-	ldx #0
-.scroll_message_not_ended
-    stx scroll_heading_position
-.plot_scroll_row_loop
-    lda data_scrolling_heading_message,x
-	bne .continue_scroll_message
-	ldx #0
-	lda data_scrolling_heading_message,x
+	bcc .continue_scroll_message
+
+	ldx #0  ;reset scroll message index
 .continue_scroll_message
-    sta $0100,y
-	inx
-	iny
-	cpy #20
-	bcc .plot_scroll_row_loop
+    stx scroll_message_index
+
+    ; store one line of the scroll message starting from the scroll message index
+.store_scroll_message_loop
+
+    lda data_scrolling_heading_message,x  ;read scroll message data using index
+	bne .store_scroll_message  ;message terminates with a zero
+	ldx #0  ;reset scroll message index if message ends in the plot message loop
+	lda data_scrolling_heading_message,x  ;read scroll message data from start using index
+.store_scroll_message
+    sta scroll_message_store,y
+
+	inx  ;next message data index
+	iny  ;next storage position for message character
+	cpy #20  ; 20 message characters stored at a time (with terminator below)
+	bcc .store_scroll_message_loop
+
+    ; add terminator to the end of the stored message
 	lda #0
-	sta $0100,y
+	sta scroll_message_store,y
 	rts
 
 ;-----------------------------------------------------------------------------------
@@ -4105,7 +4252,9 @@ display_opening_title_screen
 
     jsr set_screen_base_colours
 	jsr initialise_0200_onwards_with_increments_of_11
-	jsr clear_512_custom_characters
+	jsr clear_screen_and_add_heading_block
+
+    ; prepare start up sound
 	jsr clear_all_sound_channels
 	lda #%00101010  ;aux colour red, volume 10
 	sta _VIC_VOLUME
@@ -4115,12 +4264,12 @@ display_opening_title_screen
 
     ; display "creative software" in heading
 	lda #<data_heading_publisher
-	sta text_pointer_low
+	sta text_data_low
 	lda #>data_heading_publisher
-	sta text_pointer_high
+	sta text_data_high
 	ldx #12
 	ldy #0
-	jsr update_heading
+	jsr plot_heading_on_screen
 
     ; play opening short tune on game start
 	lda #38
@@ -4134,12 +4283,12 @@ display_opening_title_screen
 
     ; display "presents" text in heading
 	lda #<data_heading_presents_title
-	sta text_pointer_low
+	sta text_data_low
 	lda #>data_heading_presents_title
-	sta text_pointer_high
+	sta text_data_high
 	ldx #56
 	ldy #8
-	jsr update_heading
+	jsr plot_heading_on_screen
 
     ; continue opening short tune on game start
 	lda #39
@@ -4151,6 +4300,7 @@ display_opening_title_screen
 	dec sound_loop_counter
 	bne .play_short_tune_loop
 
+    ; delay before continuing
 	ldx #4
 .delay_using_X_4_2
     ldy #255
@@ -4158,20 +4308,23 @@ display_opening_title_screen
 	dex
 	bne .delay_using_X_4_2
 
-	jsr block_22_custom_characters
+	jsr draw_blocked_out_heading_lines
 
     ; display "serpentine" in heading
 	lda #<data_heading_game_title
-	sta text_pointer_low
+	sta text_data_low
 	lda #>data_heading_game_title
-	sta text_pointer_high
+	sta text_data_high
 	ldx #48
 	ldy #0
-	jsr update_heading
+	jsr plot_heading_on_screen
 
 	jsr draw_maze_and_set_enemy_snake_start_position
-	jsr draw_scroll_heading_line
+	jsr prepare_scroll_message
+
 .play_main_theme_tune
+
+    ; prepare theme tune sound
     ldx #<data_main_theme_tune_sound_clip
 	ldy #>data_main_theme_tune_sound_clip
 	jsr prepare_sound_data
@@ -4179,13 +4332,16 @@ display_opening_title_screen
 	lda #128
 	sta sound_loop_counter
 .scroll_and_play_main_theme_loop
-    jsr scroll_heading_data_lines
+
+    jsr display_scroll_message
 	jsr handle_enemy_snake_movement
-	jsr read_joystick_to_start_game
+	jsr read_joystick_to_start_game  ;exits loop to start game, see start_game_play
 	jsr play_sounds
+
 	dec sound_loop_counter
 	bne .scroll_and_play_main_theme_loop
-	beq .play_main_theme_tune
+
+	beq .play_main_theme_tune  ;always branch
 
 ;-----------------------------------------------------------------------------------
 
@@ -4197,7 +4353,7 @@ data_eat_frog_egg_enemy_head_sound_clip_extra
     !byte $01, $fc, $01, $fd, $ff
 
 data_eat_frog_egg_enemy_head_sound_clip
-	!byte $04
+	!byte SOUND_NOISE
 	!byte <data_eat_frog_egg_enemy_head_sound_clip_extra
 	!byte >data_eat_frog_egg_enemy_head_sound_clip_extra
 	!byte $ff
@@ -4207,7 +4363,7 @@ data_frog_ribbit_sound_clip_extra
 	!byte $01, $8d, $ff
 
 data_frog_ribbit_sound_clip
-	!byte $01
+	!byte SOUND_BASS
 	!byte <data_frog_ribbit_sound_clip_extra
 	!byte >data_frog_ribbit_sound_clip_extra
 	!byte $ff
@@ -4220,21 +4376,21 @@ data_player_dies_sound_clip_extra
 	!byte $0a, $96, $ff
 
 data_player_dies_sound_clip
-	!byte $02
+	!byte SOUND_ALTO
 	!byte <data_player_dies_sound_clip_extra
 	!byte >data_player_dies_sound_clip_extra
 	!byte $ff
 
 data_starting_game_on_sound_clip_extra
 	!byte $06, $e1, $01, $00, $06, $e8, $01, $00
-	!byte $06, $ed, $01, $00, screen_row, $f0, $03, $00
+	!byte $06, $ed, $01, $00, $0f, $f0, $03, $00
 	!byte $06, $ed, $01, $00, $1e, $f0, $ff
 
 data_starting_game_on_sound_clip
-	!byte $01
+	!byte SOUND_BASS
 	!byte <data_starting_game_on_sound_clip_extra
 	!byte >data_starting_game_on_sound_clip_extra
-	!byte $02
+	!byte SOUND_ALTO
 	!byte <data_starting_game_on_sound_clip_extra
 	!byte >data_starting_game_on_sound_clip_extra
 	!byte $ff
@@ -4259,10 +4415,10 @@ data_main_theme_tune_sound_clip_extra
 	!byte $ff
 
 data_main_theme_tune_sound_clip
-	!byte $01
+	!byte SOUND_BASS
 	!byte <data_main_theme_tune_sound_clip_extra
 	!byte >data_main_theme_tune_sound_clip_extra
-	!byte $03
+	!byte SOUND_SOPRANO
 	!byte <data_main_theme_tune_sound_clip_extra
 	!byte >data_main_theme_tune_sound_clip_extra
 	!byte $ff
@@ -4277,13 +4433,13 @@ data_start_maze_sound_clip_extra
 	!byte $24, $b4, $ff
 
 data_start_maze_sound_clip
-	!byte $01
+	!byte SOUND_BASS
 	!byte <data_start_maze_sound_clip_extra
 	!byte >data_start_maze_sound_clip_extra
-	!byte $02
+	!byte SOUND_ALTO
 	!byte <data_start_maze_sound_clip_extra
 	!byte >data_start_maze_sound_clip_extra
-	!byte $03
+	!byte SOUND_SOPRANO
 	!byte <data_start_maze_sound_clip_extra
 	!byte >data_start_maze_sound_clip_extra
 	!byte $ff
@@ -4292,7 +4448,7 @@ data_eat_snake_body_1_sound_clip_extra
 	!byte $01, $dc, $01, $00, $01, $b4, $ff
 
 data_eat_snake_body_1_sound_clip
-	!byte $02
+	!byte SOUND_ALTO
 	!byte <data_eat_snake_body_1_sound_clip_extra
 	!byte >data_eat_snake_body_1_sound_clip_extra
 	!byte $ff
@@ -4301,7 +4457,7 @@ data_eat_snake_body_2_sound_clip_extra
 	!byte $01, $b4, $01, $dc, $ff
 
 data_eat_snake_body_2_sound_clip
-	!byte $02
+	!byte SOUND_ALTO
 	!byte <data_eat_snake_body_2_sound_clip_extra
 	!byte >data_eat_snake_body_2_sound_clip_extra
 	!byte $ff
@@ -4338,7 +4494,7 @@ data_snake_hissing_sound_clip_extra
 	!byte $28, $fe, $28, $00, $ff
 
 data_snake_hissing_sound_clip
-	!byte $04
+	!byte SOUND_NOISE
 	!byte <data_snake_hissing_sound_clip_extra
 	!byte >data_snake_hissing_sound_clip_extra
 	!byte $ff
@@ -4446,7 +4602,7 @@ end_of_game
 	bpl .play_end_of_game_sound
 
 	jsr clear_all_sound_channels
-	jsr clear_512_custom_characters
+	jsr clear_screen_and_add_heading_block
 	jsr plot_level_and_headings_on_screen
 	jsr plot_high_score_on_screen
 	jsr plot_player_score_on_screen
@@ -4477,17 +4633,17 @@ end_of_game
 ;-----------------------------------------------------------------------------------
 
 data_last_post_end_sound_clip_extra
-	!byte $19, $9c, $01, $00, screen_row, $9c, $01, $00
+	!byte $19, $9c, $01, $00, $0f, $9c, $01, $00
 	!byte $3c, $b5, $01, $00, $19, $9c, $01, $00
-	!byte screen_row, $b5, $01, $00, $3c, $c4, $01, $00
-	!byte $19, $b5, $01, $00, screen_row, $c4, $01, $00
+	!byte $0f, $b5, $01, $00, $3c, $c4, $01, $00
+	!byte $19, $b5, $01, $00, $0f, $c4, $01, $00
 	!byte $3c, $ce, $01, $00, $19, $c4, $01, $00
 	!byte $19, $b5, $01, $00, $3c, $9c, $01, $00
-	!byte $19, $9c, $01, $00, screen_row, $9c, $01, $00
+	!byte $19, $9c, $01, $00, $0f, $9c, $01, $00
 	!byte $3c, $b5, $01, $00, $ff
 
 data_last_post_end_sound_clip
-	!byte $03
+	!byte SOUND_SOPRANO
 	!byte <data_last_post_end_sound_clip_extra
 	!byte >data_last_post_end_sound_clip_extra
 	!byte $ff
@@ -4557,11 +4713,11 @@ player_or_baby_snake_goes_home_loop
 .move_snake_right_and_down_check_near_home
     jsr .move_snake_to_the_right
 	bcc .perform_snake_movement_in_loop  ;direction change is allowed
-	lda #down
+	lda #DIRECTION_DOWN
     ldx player_body_segments+7  ;snake head row
     cpx #119  ;outside player snake home door row?
 	bcc .move_snake_and_get_a_new_direction
-	lda #up
+	lda #DIRECTION_UP
 
 .move_snake_and_get_a_new_direction
     jsr .set_snake_direction  ;up
@@ -4591,17 +4747,17 @@ player_or_baby_snake_goes_home_loop
 	jmp .check_outside_home_row
 
 .move_snake_down_and_left_into_home
-    lda #down
+    lda #DIRECTION_DOWN
 	jsr .set_snake_direction  ;down
 	bcc .move_snake_and_check_outside_home_row  ;direction change is allowed
-	lda #left
+	lda #DIRECTION_LEFT
 	jsr .set_snake_direction  ;left
 
 .repeat_snake_move_in_direction
     jsr .goto_perform_player_movement
 	jsr .set_snake_header_screen_coords_and_check_direction
 	bne .repeat_snake_move_in_direction
-	lda #down
+	lda #DIRECTION_DOWN
 	jsr .set_snake_direction  ;down
 	bcs .repeat_snake_move_in_direction  ;direction change is not allowed
 
@@ -4614,12 +4770,12 @@ player_or_baby_snake_goes_home_loop
 .open_door_and_get_into_home
     clc  ;to clear space and open door
 	jsr open_or_close_snake_entrance_door   ;door open
-	lda #down  ;move snake down into home
+	lda #DIRECTION_DOWN  ;move snake down into home
 	sta player_snake_direction
 	lda #255
-	sta $83
+	sta player_and_enemy_table+3  ;update snake in home or maze to #255 (reached home)
 	jsr .goto_perform_player_movement
-	lda #left  ;move snake left into home
+	lda #DIRECTION_LEFT  ;move snake left into home
 	sta player_snake_direction
 
 .move_inside_home_loop
@@ -4637,7 +4793,7 @@ player_or_baby_snake_goes_home_loop
 	jmp clear_all_sound_channels
 
 .move_snake_to_the_right
-    lda #right
+    lda #DIRECTION_RIGHT
 .set_snake_direction
     sta player_snake_direction  ;right
 	sta snake_direction  ;right
@@ -4794,19 +4950,19 @@ data_baby_snake_sound_clip_extra
 	!byte $18, $cd, $ff
 
 data_player_goes_home_sound_clip
-	!byte $02
+	!byte SOUND_ALTO
 	!byte <data_player_goes_home_sound_clip_extra
 	!byte >data_player_goes_home_sound_clip_extra
-	!byte $03
+	!byte SOUND_SOPRANO
 	!byte <data_player_goes_home_sound_clip_extra
 	!byte >data_player_goes_home_sound_clip_extra
 	!byte $ff
 
 data_baby_snake_sound_clip
-	!byte $02
+	!byte SOUND_ALTO
 	!byte <data_baby_snake_sound_clip_extra
 	!byte >data_baby_snake_sound_clip_extra
-	!byte $03
+	!byte SOUND_SOPRANO
 	!byte <data_baby_snake_sound_clip_extra
 	!byte >data_baby_snake_sound_clip_extra
 	!byte $ff
