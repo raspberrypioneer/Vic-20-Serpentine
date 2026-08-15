@@ -13,19 +13,19 @@ _BITMAP_GRID = $0200  ;512
 ; shapes and sprites in plot_bitmap_on_screen, erase_bitmap_on_screen and other routines.
 _BITMAP_CANVAS = $1000  ;4096
 
-_COLOUR_SCREEN_ADDR = $9600  ;38400
+_COLOUR_SCREEN_ADDR    = $9600  ;38400 colour memory
 
-_VIC_SCREEN_LEFT_EDGE = $9000  ;36864 left edge of TV picture
-_VIC_SCREEN_TOP_EDGE  = $9001  ;36865 vertical TV picture origin
-_VIC_SOUND_BASS       = $900a  ;36874 audio frequency generator 1
-_VIC_SOUND_ALTO       = $900b  ;36875 audio frequency generator 2
-_VIC_SOUND_SOPRANO    = $900c  ;36876 audio frequency generator 3
-_VIC_VOLUME           = $900e  ;36878 sound volume (and auxiliary colour not used here)
-_VIC_IRQ_ENABLE       = $911e  ;37150 interrupt enable register
+_VIC_SCREEN_LEFT_EDGE  = $9000  ;36864 left edge of TV picture
+_VIC_SCREEN_TOP_EDGE   = $9001  ;36865 vertical TV picture origin
+_VIC_SOUND_BASS        = $900a  ;36874 audio frequency generator 1
+_VIC_SOUND_ALTO        = $900b  ;36875 audio frequency generator 2
+_VIC_SOUND_SOPRANO     = $900c  ;36876 audio frequency generator 3
+_VIC_VOLUME_AUX_COLOUR = $900e  ;36878 sound volume and auxiliary colour
+_VIC_IRQ_ENABLE        = $911e  ;37150 interrupt enable register
 
-_VIA_JOYSTICK_MIRROR  = $911f  ;37151 mirror of $9111 (37137) port A I/O register
-_VIA_KEYB_ROWS        = $9120  ;37152 port B I/O register
-_VIA_DATADIR_B        = $9122  ;37154 data direction register for port B
+_VIA_JOYSTICK_MIRROR   = $911f  ;37151 mirror of $9111 (37137) port A I/O register
+_VIA_KEYB_ROWS         = $9120  ;37152 port B I/O register
+_VIA_DATADIR_B         = $9122  ;37154 data direction register for port B
 
 ;--------------------------------------------------------------------------------------------------
 ; Joystick constants
@@ -77,15 +77,16 @@ bitmap_spill_bits = $03  ;holds the "spill" bits to be written into the next scr
 temp_snake_data_pointer1 = $05  ;variable for player or enemy snake data table pointer
 temp_snake_data_pointer2 = $06  ;variable for player or enemy snake data table pointer often segments
 
-body_segments = $07  ;value of snake body segments counting the head as a segment
+snake_length = $07  ;number of snake body segments counting the head as a segment
 snake_colour = $08  ;colour 0: player snake, 1: dangerous enemy snake, 2: weak enemy snake
-desired_snake_direction = $09  ;is the planned direction
 snake_in_home_or_maze = $0a  ;initially #128 (ready to leave home), #255 (reached home), #0 (left home, in maze)
 snake_active_indicator = $0b
-pending_direction_change = $0c  ;is the in-flight transition between the desired_snake_direction and current_segment_direction
-screen_coords_table = $0d  ;$0d (current_segment_direction), $0e (screen_column), $0f (screen_row)
-current_segment_direction = $0d  ;(dual use label) is the direction actually being used for this segment
+screen_coords_table = $0d  ;$0d (current_direction), $0e (screen_column), $0f (screen_row)
 maze_part_to_plot = $0d  ;dual use label
+
+current_direction = $0d  ;(dual use label) is the direction actually being used for this segment
+planned_direction = $09  ;the direction the game/AI intends to move next before validation
+pending_direction = $0c  ;the direction after validation, waiting to be committed into current_direction
 
 screen_column = $0e
 screen_row = $0f
@@ -167,12 +168,15 @@ sound_clip_address_high = $72  ;high address for sound clip data
 player_and_enemy_table = $80  ;table where player and enemy snake data is held
 player_and_enemy_table_word = $0080  ;table where player and enemy snake data is held (alternate reference)
 enemy_snake_table = $80  ;table where enemy snake data is held (used to indicate enemy snake only)
-player_body_segments = $80  ;number of body segments
+player_snake_length = $80  ;number of body segments
 player_snake_direction = $82  ;direction indicator
+player_snake_head_direction = $85
+player_snake_head_column = $86
+player_snake_head_row = $87
 
-snake_1_body_segments = $9f  ;number of body segments
-snake_2_body_segments = $bd  ;number of body segments
-snake_3_body_segments = $db  ;number of body segments
+snake_1_length = $9f  ;number of body segments
+snake_2_length = $bd  ;number of body segments
+snake_3_length = $db  ;number of body segments
 
 ;--------------------------------------------------------------------------------------------------
 ; Other storage addresses
@@ -180,7 +184,7 @@ snake_3_body_segments = $db  ;number of body segments
 scroll_message_store = $0100  ;starting address of the scrolling message text (holds 20 characters)
 
 ;--------------------------------------------------------------------------------------------------
-; Start program, game was originally a cartridge so no basic loader
+; Start program, game was originally a cartridge so no basic loader.
 
 * = $a000
     ; auto start the program
@@ -191,11 +195,11 @@ scroll_message_store = $0100  ;starting address of the scrolling message text (h
     !pet "a0CBM"  ;start of signature a0CBM
 
 ;--------------------------------------------------------------------------------------------------
-; Player snake table, data is saved in zero page $80 +
-; See references to zero page data for each snake in player_and_enemy_table, player_and_enemy_table_word
+; Player snake table, data is saved in zero page $80 +.
+; See references to zero page data for each snake in player_and_enemy_table, player_and_enemy_table_word.
 
 data_player_snake_for_zero_page
-    !byte $03  ;player_body_segments
+    !byte $03  ;player_snake_length
 	!byte $00  ;snake colour number: 0 is blue
 	!byte $00  ;snake direction
 	!byte $80  ;snake in home or maze: #128 (ready to leave home), #255 (reached home), #0 (left home, in maze)
@@ -212,9 +216,9 @@ data_player_snake_for_zero_page
     !byte $aa, $aa, $aa, $aa, $aa, $aa, $aa
 
 ;--------------------------------------------------------------------------------------------------
-; Enemy snake table for each snake, data is saved in zero page locations
-; $9e + for snake 1, $bc + for snake 2, $da + for snake 3
-; See references to zero page data for each snake in player_and_enemy_table, player_and_enemy_table_word
+; Enemy snake table for each snake, data is saved in zero page locations.
+;   $9e + for snake 1, $bc + for snake 2, $da + for snake 3
+; See references to zero page data for each snake in player_and_enemy_table, player_and_enemy_table_word.
 
 data_enemy_snake_for_zero_page
     !byte $3c  ;60 delay for snake to enter cave
@@ -237,6 +241,7 @@ data_enemy_snake_for_zero_page
     !byte $aa, $aa, $aa, $aa, $aa, $aa
 
 ;--------------------------------------------------------------------------------------------------
+; The program starts here where the initialisation is performed and opening title screen displayed.
 
 start_of_program
 
@@ -253,6 +258,10 @@ start_of_program
 	jsr initialise_pseudo_random_values
 	jsr display_opening_title_screen
 
+;--------------------------------------------------------------------------------------------------
+; Main game play starts here, after display of the opening title screen for the first game session
+; and returns here when a game session ends (all player lives are lost).
+
 start_game_play
 
 	jsr clear_all_sound_channels
@@ -261,19 +270,21 @@ start_game_play
 	jsr check_for_new_high_score
 	ldx #3
 	stx player_lives
-	stx player_body_segments
+	stx player_snake_length
 	dex
 	stx $5a
 	jsr zero_player_score
 	lda #1
 	sta maze_level
 
-;--------------------------------------------------------------------------------------------------
-
+    ;----------------------------------------------------------------------------------------------
+    ; each player life starts here and loops here for each life until all of them are lost
 play_one_life
 
 	ldx #247
-	txs
+	txs  ;start from a known stack position precaution
+
+    ; prepare for a new player life by initialising and resetting the screen display etc
 	jsr clear_all_sound_channels
 	jsr clear_egg_variables
 	jsr clear_screen_and_add_heading_block
@@ -289,7 +300,10 @@ play_one_life
 	jsr set_enemy_snake_start_position
 	jsr play_about_to_start_maze_tune
 
+    ;----------------------------------------------------------------------------------------------
+    ; play runs in a continuous loop from here until the player snake is killed
 .game_play_loop
+
 	jsr handle_player_movement
 	jsr handle_enemy_snake_movement
 	jsr handle_player_and_enemy_snake_interactions
@@ -321,9 +335,11 @@ play_one_life
 	bcs .game_play_loop  ;always branch
 
 ;--------------------------------------------------------------------------------------------------
+; Initialise zero page data with player and enemy snake data etc.
 
 initialise_zero_page
 
+    ; initialise zero page variables with player snake data
 	ldy #25
 .init_zero_page_loop
 	lda data_player_snake_for_zero_page,y
@@ -331,6 +347,7 @@ initialise_zero_page
 	dey
 	bne .init_zero_page_loop
 
+    ;----------------------------------------------------------------------------------------------
     ; assign player speed controls, slowing the player down a bit as maze level increases
 	lda #10  ;8 is slowest, so 10 is quite slow
 	ldx maze_level
@@ -348,13 +365,14 @@ initialise_zero_page
 	sta enemy_snake_speed_counter
 	sta enemy_snake_speed_reload
 
-	ldx #29
-	jsr .init_zero_page_group_of_30
-	ldx #59
-	jsr .init_zero_page_group_of_30
-
-	ldx #89
-.init_zero_page_group_of_30
+    ;----------------------------------------------------------------------------------------------
+    ; initialise zero page variables with enemy snake data for all 3 enemy snakes
+	ldx #29  ;enemy snake 1
+	jsr .init_enemy_snake_zero_page_data
+	ldx #59  ;enemy snake 2
+	jsr .init_enemy_snake_zero_page_data
+	ldx #89  ;enemy snake 3
+.init_enemy_snake_zero_page_data
 	ldy #29
 .init_zero_page_30_loop
 	lda data_enemy_snake_for_zero_page,y
@@ -363,18 +381,20 @@ initialise_zero_page
 	dey
 	bpl .init_zero_page_30_loop
 
+    ;----------------------------------------------------------------------------------------------
 	ldx #5
 	lda #0
-.clear_zero_page_2e_33
+.init_tick_table_in_zero_page
 	sta snake_tick_table,x  ;initialise all to zero
 	dex
-	bpl .clear_zero_page_2e_33
+	bpl .init_tick_table_in_zero_page
 	sta game_speed_counter
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Common delay loop used throughout.
 
-	ldy #1
+	ldy #1  ;not needed
 delay_using_Y
 	txa
 	pha
@@ -390,24 +410,31 @@ delay_using_Y
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Joystick input priority, ordered so a diagonal input resolves to up, down, right, left, then fire.
 
-direction_list
+data_joystick_direction_and_fire
 	!byte JOY_UP, JOY_DOWN, JOY_RIGHT, JOY_LEFT, JOY_FIRE
 
 ;--------------------------------------------------------------------------------------------------
+; Read joystick for a valid direction or fire button press.
+; If fire is pressed, pause the game, waiting for it to be pressed again to resume.
 
 get_joystick_movement
 
 	jsr read_joystick
-	bcs .no_joystick_action
-	cmp #JOY_FIRE
-	bne .joy_movement_in_X
+	bcs .exit_no_joystick_movement
 
-    ; pause game when fire is pressed
-	lda _VIC_VOLUME
+    ; check if fire button pressed to pause game
+	cmp #JOY_FIRE
+	bne .store_joystick_direction_in_X  ;fire not pressed, store direction and exit
+
+    ; pause game, start by turning off the volume
+	lda _VIC_VOLUME_AUX_COLOUR
 	tay
-	and #%11110000
-	sta _VIC_VOLUME
+	and #%11110000  ;mask the aux colour bits 7-4
+	sta _VIC_VOLUME_AUX_COLOUR
+
+    ; wait for fire button to be pressed again (debounced)
 .wait_no_fire_press1
 	jsr read_joystick
 	cmp #JOY_FIRE
@@ -420,14 +447,18 @@ get_joystick_movement
 	jsr read_joystick
 	cmp #JOY_FIRE
 	beq .wait_no_fire_press3
-	sty _VIC_VOLUME
-.no_joystick_action
+
+    ; restore volume and exit
+	sty _VIC_VOLUME_AUX_COLOUR
+.exit_no_joystick_movement
 	rts
-.joy_movement_in_X
+
+.store_joystick_direction_in_X
 	stx player_snake_direction  ;X is the direction: 1 up, 2 down, 3 right, 4 left
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Read the registers for the joystick, and clean the result for a single direction (and fire button).
 
 read_joystick
 
@@ -443,13 +474,17 @@ read_joystick
 	eor #255
 	and #%00111100  ;isolate joystick directions and fire
 	lsr  ;shift right
-	ora temp1  ;add right direction, bits are not fire (16 if on), left (8 if on), down (4 if on), up (2 if on) and right (1 if on)
+
+    ; add the right direction bit
+    ; bits are now fire (16 if on), left (8 if on), down (4 if on), up (2 if on) and right (1 if on)
+	ora temp1
 	beq .read_joy_set_carry_exit
 
-    ; get a single joystick direction / fire from priority table (in case more than one at the same time e.g. up-left)
+    ; get a single joystick direction and fire from priority table 
+    ; needed in case a diagonal direction is detected e.g. up-left (which will choose up not left)
 	ldx #5
 .direction_loop
-	cmp direction_list-1,x
+	cmp data_joystick_direction_and_fire-1,x
 	beq .read_joy_clear_carry_exit
 	dex
 	bne .direction_loop
@@ -462,6 +497,9 @@ read_joystick
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Fill screen colour memory with the base colour for the main screen and heading lines.
+; Multi-colours are used (elsewhere) in this game using the background and borders, and auxiliary
+; colour settings, see _VIC_BG_BORDER_COL and _VIC_VOLUME_AUX_COLOUR.
 
 set_screen_base_colours
 
@@ -475,7 +513,7 @@ set_screen_base_colours
 	cpy #22
 	bne .set_screen_base_colour_loop
 
-    ; set top 2 title line colour
+    ; set heading lines colour
 	lda #6  ;colour blue
 .set_top_base_colour_loop
 	sta _COLOUR_SCREEN_ADDR-1,y
@@ -519,6 +557,7 @@ initialise_bitmap_grid_index
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Clear the bitmap canvas and plot the top 2-line heading section.
 
 clear_screen_and_add_heading_block
 
@@ -569,8 +608,8 @@ draw_blocked_out_heading_lines
 	rts
 
 ;--------------------------------------------------------------------------------------------------
-; Base low/high bytes for each 8-pixel column on the bitmap screen
-; each column is 176 pixels apart (11 rows x 16-pixels tall), see _VIC_CR3
+; Base low / high bytes for each 8-pixel column on the bitmap screen.
+; each column is 176 pixels apart (11 rows x 16-pixels tall), see _VIC_CR3.
 
 data_bitmap_column_base_low
 	!byte $00, $b0, $60, $10, $c0, $70, $20, $d0
@@ -583,10 +622,10 @@ data_bitmap_column_base_high
 	!byte $1b, $1b, $1c, $1d, $1d, $1e
 
 ;--------------------------------------------------------------------------------------------------
-; Compute the 8x8 bitmap screen address for the sprite at screen_column/screen_row.
+; Compute the 8x8 bitmap screen address for an object / sprite at screen_column / screen_row.
 ; screen_column selects the 8-pixel-wide column using a table lookup.
 ; screen_row is added as the vertical byte offset from that column base.
-; Result is returned in bitmap_screen_address_low/high.
+; Result is returned in bitmap_screen_address_low / high.
 
 compute_bitmap_screen_address_from_screen_row_column
 
@@ -625,13 +664,14 @@ compute_bitmap_screen_address_from_screen_row_column
 	rts
 
 ;--------------------------------------------------------------------------------------------------
-; Bit blitter for an 8-byte sprite / bitmap
-; Plots the given object on the screen by adding to the bits already present there
+; Bit blitter for an 8-byte object / sprite bitmap.
+; Plots the given object on the screen by adding to the bits already present there.
+
 plot_bitmap_on_screen
 
 	jsr compute_bitmap_screen_address_from_screen_row_column
 
-	ldy #7  ;8 pixel bytes in a sprite / character
+	ldy #7  ;8 pixel bytes in an object / sprite
 .plot_bitmap_pixels_loop
 
     ; get pixel byte to plot
@@ -673,13 +713,14 @@ plot_bitmap_on_screen
 	rts
 
 ;--------------------------------------------------------------------------------------------------
-; Bitmask-based eraser for an 8-byte sprite / bitmap
-; Unplots the given object bits on the screen, thereby clearing it
+; Bitmask-based eraser for an 8-byte object / sprite bitmap.
+; Unplots the given object bits on the screen, thereby clearing it.
+
 erase_bitmap_on_screen
 
 	jsr compute_bitmap_screen_address_from_screen_row_column
 
-	ldy #7  ;8 pixel bytes in a sprite / character
+	ldy #7  ;8 pixel bytes in an object / sprite
 .clear_bitmap_pixels_loop
 
     ; get pixel byte to plot
@@ -724,11 +765,13 @@ erase_bitmap_on_screen
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Populate the working variables table for screen_row, screen_column and segment_direction for 
+; player / enemy snake head or body segments (also in zero page).
 
 get_screen_coordinates_for_sprite
 
 	ldy temp_snake_data_pointer2
-get_screen_coordinates_for_sprite_player  ;Y is 7 when called
+get_screen_coordinates_for_sprite_player  ;points to player snake when used
 	ldx #2
 .get_sprite_screen_coords_loop
 	lda player_and_enemy_table_word,y  ;player_and_enemy_table with offset for sprite in Y
@@ -739,6 +782,8 @@ get_screen_coordinates_for_sprite_player  ;Y is 7 when called
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Populate the zero page table for player / enemy snake head or body segments from the working
+; variables table for screen_row, screen_column and segment_direction.
 
 set_screen_coordinates_for_sprite
 
@@ -753,6 +798,7 @@ set_screen_coordinates_for_sprite
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Per-direction signed movement deltas.  Directions are indexed as up, down, right, then left.
 
 data_screen_column_increments
 	!byte 0, 0, 2, 254
@@ -760,10 +806,12 @@ data_screen_row_increments
 	!byte 254, 2, 0, 0
 
 ;--------------------------------------------------------------------------------------------------
+; Calculates the next coordinate for current_direction and returns it in X/Y without storing it.
+; Bit 7 of $04 is set when that proposed coordinate remains inside the playable screen bounds.
 
-check_and_update_screen_row_column
+calculate_next_screen_coordinates
 
-	ldx current_segment_direction
+	ldx current_direction
 	bne check_if_movement_direction_is_within_screen_bounds
 	ldx screen_column
 	ldy screen_row
@@ -809,20 +857,19 @@ check_if_movement_direction_is_within_screen_bounds
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Applies current_direction to the working screen_column and screen_row, subject to screen bounds.
 
 update_screen_row_column
 
-	jsr check_and_update_screen_row_column
+	jsr calculate_next_screen_coordinates
 	stx screen_column
 	sty screen_row
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Checks if the snake head is aligned to a 16-pixel maze cell boundary.
 
 check_snake_head_maze_cell_alignment
-
-    ; checks if the snake head is aligned to the 16-pixel cell maze grid
-    ; before going on to check whether the movement should be validated (within screen bounds, not blocked etc)
 
 	lda #128  ;set bit 7 on (assume snake head is not aligned to a maze cell boundary)
 	sta maze_cell_boundary_flag
@@ -845,11 +892,10 @@ check_snake_head_maze_cell_alignment
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Check if the snake head is currently sitting on the next 8-pixel stepping point 
+; where movement/turn logic should be considered
 
 check_if_screen_coords_are_on_8_pixel_boundary
-
-    ; check if the snake head is currently sitting on the next 8-pixel stepping point 
-    ; where movement/turn logic should be considered
 
     ; returns zero when both screen row and column are on the 8-pixel boundary
     ; after subtracting 6 (i.e. values matching (coord-6) & 7 == 0)
@@ -869,11 +915,14 @@ check_if_screen_coords_are_on_8_pixel_boundary
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Maze-index adjustments for up, down, right, and left when testing the cell being entered.
 
 data_to_add_to_maze_index
 	!byte 0, 11, 1, 0
 
 ;--------------------------------------------------------------------------------------------------
+; Tests whether a segment may continue in current_direction at its present maze-cell alignment.
+; Returns carry clear when movement is allowed and carry set when it is blocked.
 
 check_segment_direction_is_valid
 	bit maze_cell_boundary_flag
@@ -883,7 +932,7 @@ check_segment_direction_is_valid
 	rts
 
 .check_segment_movement_is_valid_in_maze_and_current_cell
-    ldx current_segment_direction
+    ldx current_direction
 
 check_movement_is_valid_in_maze_and_current_cell
     stx snake_direction_pointer_to_test
@@ -925,17 +974,19 @@ check_movement_is_valid_in_maze_and_current_cell
 	bcc .direction_allowed_for_maze_cell  ;always branch
 
 ;--------------------------------------------------------------------------------------------------
+; Validates planned_direction against maze walls, turn alignment, and the special home-door case.
+; Returns carry clear for an allowed change and carry set otherwise.
 
 check_if_direction_change_is_valid
 
-    ldx desired_snake_direction
+    ldx planned_direction
 	bit maze_cell_boundary_flag
 	bpl check_movement_is_valid_in_maze_and_current_cell
 	jsr check_if_screen_coords_are_on_8_pixel_boundary
 	bne .direction_not_valid  ;not on 8 pixel boundary
 
-	ldx desired_snake_direction
-	lda current_segment_direction
+	ldx planned_direction
+	lda current_direction
 	cmp data_directions-1,x
 	bne .direction_not_valid
 	lda screen_column
@@ -949,6 +1000,8 @@ check_if_direction_change_is_valid
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Erases, advances, and redraws the body segment selected by temp_snake_data_pointer2.
+; The following entry point also advances that pointer to the next three-byte segment record.
 
 move_body_segment_on_screen
 
@@ -957,12 +1010,12 @@ move_body_segment_on_screen
 	jsr prepare_snake_body_sprite_to_use
 
 update_row_column_and_plot_bitmap_on_screen
-    lda pending_direction_change
-	beq .skip_pending_direction_change_update  ;direction change indicator still zero?
-	ldy current_segment_direction
-	sta current_segment_direction
-	sty pending_direction_change
-.skip_pending_direction_change_update
+    lda pending_direction
+	beq .skip_pending_direction_update  ;pending direction unchanged (zero)?
+	ldy current_direction
+	sta current_direction
+	sty pending_direction
+.skip_pending_direction_update
     jsr update_screen_row_column
 	jsr plot_bitmap_on_screen
 	jsr set_screen_coordinates_for_sprite
@@ -1006,6 +1059,7 @@ data_head_sprite_addresses_high
 	!fill 5, >enemy_snake_head_left_sprite
 
 ;--------------------------------------------------------------------------------------------------
+; Alternative turn directions used when an enemy needs to choose a route around an obstruction.
 
 data_directions_right_up
 	!byte DIRECTION_RIGHT, DIRECTION_RIGHT, DIRECTION_UP, DIRECTION_UP
@@ -1013,6 +1067,8 @@ data_directions_left_down
 	!byte DIRECTION_LEFT, DIRECTION_LEFT, DIRECTION_DOWN, DIRECTION_DOWN
 
 ;--------------------------------------------------------------------------------------------------
+; Set snake body data address using the sprite colour.
+; Snake bodies only differ by auxiliary colours used.
 
 prepare_snake_body_sprite_to_use
 
@@ -1024,6 +1080,8 @@ prepare_snake_body_sprite_to_use
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Set snake head data address using the sprite colour and their direction.
+; Snake heads only differ by auxiliary colours used for a given direction.
 
 set_snake_head_sprite_to_use_from_direction
 
@@ -1031,7 +1089,7 @@ set_snake_head_sprite_to_use_from_direction
     lda snake_colour  ;is 0 for player snake, 1 or 2 for enemy
 	asl
 	asl  ;asl x 2 = multiply by 4
-	adc current_segment_direction
+	adc current_direction
 	tax
 
 	lda data_head_sprite_addresses_low-1,x
@@ -1041,6 +1099,7 @@ set_snake_head_sprite_to_use_from_direction
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Handle player movement according to their speed counter
 
 handle_player_movement
 
@@ -1054,40 +1113,54 @@ handle_player_movement
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Handle both player and enemy snake movement (head, body, door and home transitions).
+; Steps involve: Load snake state, determine desired direction (player or enemy snake), 
+; validate direction changes against maze/grid alignment, move head and then body segments, 
+; and handle home door open/close
+
 perform_player_or_enemy_snake_movement
 
+    ; store the snake data pointer (start of player or enemy snake data in zero page)
     sty temp_snake_data_pointer2  ;value in snake_data_pointer or #0 (player)
 	sty temp_snake_data_pointer1
 
+    ; clear pending direction change for this snake
 	ldx #0
-	stx pending_direction_change
-.set_snake_main_variables_loop
+	stx pending_direction
+
+    ; load working variables from the snake data
+.load_snake_state_loop
     lda player_and_enemy_table_word,y  ;player_and_enemy_table with offset for sprite in Y
-	sta body_segments,x  ;update $0b (snake active indicator), $0a (snake_in_home_or_maze), $09 (snake_direction), $08 (snake_colour), $07 (body_segments)
+	sta snake_length,x  ;update snake_active_indicator, snake_in_home_or_maze, snake_direction, snake_colour, snake_length
 	iny
 	inx
 	cpx #5
-	bcc .set_snake_main_variables_loop
+	bcc .load_snake_state_loop
 
+    ; point to player or enemy snake head (Y is 7 or enemy snake pointer + 7)
+    ; get snake head direction, column and row and determine head position in maze cell
 	iny
 	iny
-	sty temp_snake_data_pointer2  ;points to player or enemy snake head (Y is 7 or enemy snake pointer + 7)
+	sty temp_snake_data_pointer2
 	jsr get_screen_coordinates_for_sprite
-	jsr check_snake_head_maze_cell_alignment  ;decide if snake head is at a position to check movement rules
-	jsr choose_enemy_snake_direction
+	jsr check_snake_head_maze_cell_alignment
+
+    ; decide planned direction and whether that direction change is permitted
+	jsr decide_snake_planned_direction
 	jsr check_if_screen_coords_are_on_8_pixel_boundary
-	bne .coords_not_on_8_pixel_boundary  ;no direction change
+	bne .check_planned_direction
 
-    ; consider a direction change
-	lda current_segment_direction
-	sta pending_direction_change
+    ; retain current direction before checking planned direction
+	lda current_direction
+	sta pending_direction
 
-.coords_not_on_8_pixel_boundary
-    lda desired_snake_direction
-	beq .no_snake_direction_change
+.check_planned_direction
+    lda planned_direction
+	beq .no_direction_change
 	jsr check_if_direction_change_is_valid
-	bcc .move_in_the_direction  ;direction change is allowed
-.no_snake_direction_change
+	bcc .commit_planned_direction_and_move  ;direction change is allowed
+
+.no_direction_change
     jsr check_segment_direction_is_valid
 	bcc .plot_snake_head_for_direction
 	ldy snake_in_home_or_maze
@@ -1097,7 +1170,7 @@ perform_player_or_enemy_snake_movement
 	sta player_and_enemy_table+3,x  ;update snake in home or maze to #0 (left home, in maze)
 	cpy #128
 	beq .plot_snake_head_for_direction
-	bne .move_in_the_direction  ;always branch
+	bne .commit_planned_direction_and_move  ;always branch
 
 .apply_direction_for_enemy_snake
     lda snake_colour  ;is 0 for player snake, 1 or 2 for enemy
@@ -1108,21 +1181,21 @@ perform_player_or_enemy_snake_movement
     lsr $9114  ;set carry flag from timer
 	bcs .carry_is_set_from_timer
 .find_valid_snake_direction_loop
-    ldy current_segment_direction
+    ldy current_direction
 	lda data_directions_right_up-1,y
-	sta desired_snake_direction  ;right or up
+	sta planned_direction  ;right or up
 	jsr check_if_direction_change_is_valid
-	bcc .move_in_the_direction  ;direction change is allowed
+	bcc .commit_planned_direction_and_move  ;direction change is allowed
 .carry_is_set_from_timer
-    ldy current_segment_direction
+    ldy current_direction
 	lda data_directions_left_down-1,y
-	sta desired_snake_direction  ;left or down
+	sta planned_direction  ;left or down
 	jsr check_if_direction_change_is_valid
 	bcs .find_valid_snake_direction_loop  ;direction change is allowed
 
-.move_in_the_direction
-    lda desired_snake_direction
-	sta pending_direction_change
+.commit_planned_direction_and_move
+    lda planned_direction
+	sta pending_direction
 	ldx temp_snake_data_pointer1
 	lda #0
 	sta player_and_enemy_table+2,x  ;snake direction
@@ -1130,10 +1203,10 @@ perform_player_or_enemy_snake_movement
     jsr clear_block_at_screen_coordinates
 	jsr set_snake_head_sprite_to_use_from_direction
 	jsr update_row_column_and_plot_bitmap_on_screen
-	dec body_segments
+	dec snake_length
 .move_body_segment_loop
     jsr move_body_segment_on_screen
-	dec body_segments
+	dec snake_length
 	bne .move_body_segment_loop
 	ldx temp_snake_data_pointer1
 	lda #8
@@ -1173,7 +1246,7 @@ perform_player_or_enemy_snake_movement
     rts
 
 ;--------------------------------------------------------------------------------------------------
-; snake head and body sprites
+; Snake head and body sprites
 
 player_snake_body_sprite
     !byte %00010100
@@ -1328,6 +1401,7 @@ enemy_weak_snake_head_left_sprite
     !byte %00111001
 
 ;--------------------------------------------------------------------------------------------------
+; Initialise Vic system registers and timers. Includes unnecessary instructions.
 
 initialise_system_registers
 
@@ -1346,6 +1420,8 @@ initialise_system_registers
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Encoded maze layouts. 
+; Each byte represents 4 of the wall-part patterns used by draw_maze_on_screen.
 
 data_maze_1
 	!byte $d5, $55, $56, $44, $a4, $49, $4a, $a5
@@ -1468,6 +1544,7 @@ data_maze_20
     !byte $0a, $94, $44, $c0
 
 ;--------------------------------------------------------------------------------------------------
+; Low-byte lookup table for the twenty maze-layout data blocks.
 
 data_maze_addresses_low
 	!byte <data_maze_1
@@ -1497,7 +1574,8 @@ data_maze_addresses_high
     !fill 4, 2+>data_maze_1
 
 ;--------------------------------------------------------------------------------------------------
-; Use the maze level (the current maze to be played), lookup the maze layout and display it
+; Use the maze level (the current maze to be played) to lookup the maze layout data, then build
+; it using the various vertical and horizontal sections it is made up of, and display it.
 
 draw_maze_on_screen
 
@@ -1605,7 +1683,7 @@ draw_maze_on_screen
 	rts
 
 ;--------------------------------------------------------------------------------------------------
-; maze part data
+; Maze part data
 
 data_maze_part_0
     ;single green square
@@ -1663,7 +1741,7 @@ data_maze_part_4
     !byte %01010000
 
 ;--------------------------------------------------------------------------------------------------
-; maze part addresses
+; Maze part addresses
 
 data_maze_parts_low
     !byte <data_maze_part_0  ;single green square
@@ -1676,6 +1754,7 @@ data_maze_parts_high
     !byte >data_maze_part_3  ;vertical wall section with green spare on top
 
 ;--------------------------------------------------------------------------------------------------
+; Pixel offsets used to place each component of a compound maze-wall pattern.
 
 data_draw_maze_part_horizontal_offset
 	!byte $08, $00
@@ -1684,6 +1763,8 @@ data_draw_maze_part_vertical_offset
 	!byte $00, $08
 
 ;--------------------------------------------------------------------------------------------------
+; Draws the bitmap pieces for the maze part selected in A at the current maze-cell coordinates.
+; Compound wall parts are expanded into their constituent horizontal and vertical bitmap blocks.
 
 plot_maze_parts_on_screen
 
@@ -1727,6 +1808,7 @@ plot_maze_parts_on_screen
     rts
 
 ;--------------------------------------------------------------------------------------------------
+; Converts maze_index (0–120) to the top-left screen coordinates of its 16-pixel maze cell.
 
 convert_maze_index_to_screen_row_column
 
@@ -1755,6 +1837,7 @@ convert_maze_index_to_screen_row_column
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Converts screen_column and screen_row to the corresponding 11-by-11 maze-cell index.
 
 convert_screen_row_column_to_maze_index
 
@@ -1825,6 +1908,7 @@ get_maze_part_from_maze_data
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Player snake and enemy snake entrance-door block.
 
 data_for_snake_entrance_door
     !byte %01010101
@@ -1837,18 +1921,20 @@ data_for_snake_entrance_door
     !byte %00000000
 
 ;--------------------------------------------------------------------------------------------------
+; Draws the initial player snake, then opens its home entrance door for the start of a life.
 
 plot_player_snake_and_open_entrance_door
 
 	lda #0
 	sta snake_colour  ;is 0 for player snake, 1 or 2 for enemy
-	lda player_body_segments
-	sta body_segments  ;points to player snake number of segments
+	lda player_snake_length
+	sta snake_length  ;points to player snake number of segments
 	lda #7
 	jsr plot_entire_snake_on_screen
 	clc
 
 ;--------------------------------------------------------------------------------------------------
+; Draws or erases a snake-home entrance door. Carry selects the operation and X/Y supply its coordinates.
 
 open_or_close_snake_entrance_door
 
@@ -1861,13 +1947,15 @@ open_or_close_snake_entrance_door_with_X_Y_coordinates
 	sta pixel_data_low
 	lda #>data_for_snake_entrance_door
 	sta pixel_data_high
-	bcs .goto_plot_bitmap_on_screen_1
-	jmp erase_bitmap_on_screen
+	bcs .plot_closed_door
+	jmp erase_bitmap_on_screen  ;plot opened door
 
-.goto_plot_bitmap_on_screen_1
-    jmp plot_bitmap_on_screen
+.plot_closed_door
+    jmp plot_bitmap_on_screen  ;plot closed door
 
 ;--------------------------------------------------------------------------------------------------
+; Draws every segment of the currently selected snake using its stored direction and coordinates.
+; The second entry expects those working coordinates to have already been loaded.
 
 plot_entire_snake_on_screen
 
@@ -1883,7 +1971,7 @@ plot_entire_snake_on_screen_with_prepared_coordinates
 .plot_snake_part_on_screen
     jsr plot_bitmap_on_screen
 	jsr add_3_to_point_to_next_segment  ;coordinates of next segment
-	dec body_segments  ;points to player or enemy snake number of segments
+	dec snake_length  ;points to player or enemy snake number of segments
 	bne .plot_snake_body_loop
 	rts
 
@@ -1934,6 +2022,7 @@ plot_heading_on_screen
     rts
 
 ;--------------------------------------------------------------------------------------------------
+; Plots the 8-by-8 bitmap whose address is in pixel_data_low/high at screen_column/screen_row.
 
 plot_block_at_screen_coordinates
 
@@ -1946,6 +2035,7 @@ plot_block_at_screen_coordinates
 	jmp plot_bitmap_on_screen
 
 ;--------------------------------------------------------------------------------------------------
+; Erases the 8-by-8 bitmap whose address is in pixel_data_low/high at screen_column/screen_row.
 
 clear_block_at_screen_coordinates
 
@@ -1958,6 +2048,7 @@ clear_block_at_screen_coordinates
 	jmp erase_bitmap_on_screen
 
 ;--------------------------------------------------------------------------------------------------
+; Plots the bitmap byte in A at the current screen coordinate.
 
 plot_A_on_screen
 
@@ -1976,6 +2067,7 @@ plot_A_on_screen
 	lda #129  ;$81
 
 ;--------------------------------------------------------------------------------------------------
+; Plot the pixel data in address pixel_data_low / high and move to the next screen position
 
 reverse_plot_pixel_data_and_increment_screen_coords
 
@@ -1992,6 +2084,7 @@ reverse_plot_pixel_data_and_increment_screen_coords
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Heading line text for score, maze level and number of lives
 
 data_score_heading
 	!pet "score"
@@ -2009,9 +2102,11 @@ data_level_heading
 	!byte $00
 
 ;--------------------------------------------------------------------------------------------------
+; Plot score and maze level headings, including the current maze-level number.
 
 plot_level_and_headings_on_screen
 
+    ; plot score heading
     lda #<data_score_heading
 	sta text_data_low
 	lda #>data_score_heading
@@ -2020,6 +2115,7 @@ plot_level_and_headings_on_screen
 	ldy #0
 	jsr plot_heading_on_screen
 
+    ; plot maze level heading
 	lda #<data_level_heading
 	sta text_data_low
 	lda #>data_level_heading
@@ -2028,6 +2124,7 @@ plot_level_and_headings_on_screen
 	ldy #8
 	jsr plot_heading_on_screen
 
+    ; plot maze level number which may be 1 or 2 digits
 	lda #48
 	sta screen_column
 	lda #8
@@ -2063,6 +2160,7 @@ zero_player_score
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Adds the low-byte amount in A to the three-byte player score, propagating decimal carries.
 
 update_player_score_low_amount
 
@@ -2094,6 +2192,7 @@ update_player_score
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Plots the current three-byte player score in the heading area.
 
 plot_player_score_on_screen
 
@@ -2154,6 +2253,7 @@ plot_score_on_screen
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Plots the current three-byte high score in the heading area.
 
 plot_high_score_on_screen
 
@@ -2163,6 +2263,7 @@ plot_high_score_on_screen
 	jmp plot_score_on_screen
 
 ;--------------------------------------------------------------------------------------------------
+; Check if a new high score has been achieved and update it accordingly.
 
 check_for_new_high_score
 
@@ -2188,6 +2289,7 @@ check_for_new_high_score
     rts
 
 ;--------------------------------------------------------------------------------------------------
+; Increase player_lives, capped to maximum of 9
 
 add_one_to_player_lives
 
@@ -2197,7 +2299,10 @@ add_one_to_player_lives
 	inx
 	stx player_lives
 
+    ;----------------------------------------------------------------------------------------------
+    ; plot player lives on screen
 plot_player_lives_on_screen
+
     lda #144
 	sta screen_column
 	lda #8
@@ -2206,19 +2311,25 @@ plot_player_lives_on_screen
 	lda player_lives
 	jmp plot_A_on_screen
 
+;--------------------------------------------------------------------------------------------------
+; Decrease player_lives, carry is set if no more lives are left, cleared otherwise.
+
 update_player_loses_life
+
     ldx player_lives
 	dex
 	stx player_lives
 	jsr plot_player_lives_on_screen
-	sec
+	sec  ;set carry - assume no more lives available
 	ldx player_lives
 	beq .skip_lose_life_clear_carry
-	clc
+	clc  ;clear carry - remaining lives are available
 .skip_lose_life_clear_carry
     rts
 
 ;--------------------------------------------------------------------------------------------------
+; Play notes on active sound channels by fetching sound data, setting the appropriate VIC sound 
+; registers, and decrementing note duration.
 
 play_sounds
 
@@ -2269,6 +2380,7 @@ play_sounds
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Converts the sound clip selected by A into per-channel data pointers and initial duration counters.
 
 prepare_sound_data
 
@@ -2318,6 +2430,7 @@ prepare_sound_data
     rts
 
 ;--------------------------------------------------------------------------------------------------
+; A four-channel silent clip used to reset the sound channels.
 
 data_clear_all_sound_channels
     !byte SOUND_BASS, <data_sound_end, >data_sound_end
@@ -2328,18 +2441,20 @@ data_sound_end
     !byte $ff
 
 ;--------------------------------------------------------------------------------------------------
+; Selects the silent clip and clears the VIC sound voice registers.
 
 clear_all_sound_channels
 
     ; clear sounds on each channel
     lda #%00101010  ;aux colour red, volume 10
-	sta _VIC_VOLUME
+	sta _VIC_VOLUME_AUX_COLOUR
 	ldx #<data_clear_all_sound_channels
 	ldy #>data_clear_all_sound_channels
 	jsr prepare_sound_data
 	jmp play_sounds
 
 ;--------------------------------------------------------------------------------------------------
+; Positions the enemy snakes for the current maze and starts their delayed entrance sequence.
 
 set_enemy_snake_start_position
 
@@ -2347,9 +2462,9 @@ set_enemy_snake_start_position
 	cmp #1  ;first maze
 	bne .not_maze_number_one
 	lda #5  ;head plus 4 body parts, easier for the first maze, changes to 6 for the others
-	sta snake_1_body_segments
-	sta snake_2_body_segments
-	sta snake_3_body_segments
+	sta snake_1_length
+	sta snake_2_length
+	sta snake_3_length
 .not_maze_number_one
     ; change the delay for snakes 1 and 3 to enter cave, the default value is 60 applied to snake 2
     lda #0
@@ -2360,7 +2475,7 @@ set_enemy_snake_start_position
 	ldx #31  ;point to first snake table data
 perform_snake_entrance
     lda enemy_snake_table,x  ;enemy snake number of segments
-	sta body_segments  ;points to player or enemy snake number of segments
+	sta snake_length  ;points to player or enemy snake number of segments
 	lda #1  ;enemy snake is red (normal) colour
 	sta snake_colour  ;is 0 for player snake, 1 or 2 for enemy
 	txa
@@ -2373,16 +2488,19 @@ perform_snake_entrance
     jmp open_or_close_snake_entrance_door_with_X_Y_coordinates   ;door open
 
 ;--------------------------------------------------------------------------------------------------
+; Candidate cardinal directions for enemy movement.
 
 data_directions
 	!byte DIRECTION_DOWN, DIRECTION_UP, DIRECTION_LEFT, DIRECTION_RIGHT
 
 ;--------------------------------------------------------------------------------------------------
+; Increasing thresholds that select the enemy AI's random-turn behaviour.
 
 data_random_state_comparison_values
 	!byte 50, 80, 110, 140, 170, 190, 210, 225, 240, 250
 
 ;--------------------------------------------------------------------------------------------------
+; Moves each active enemy snake when its speed timer permits.
 
 handle_enemy_snake_movement
 
@@ -2395,6 +2513,7 @@ handle_enemy_snake_movement
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Performs one enemy snake update selected by snake_data_pointer.
 
 perform_enemy_snake_movement
 
@@ -2440,17 +2559,17 @@ perform_enemy_snake_movement
 
 ;--------------------------------------------------------------------------------------------------
 ; Check if the enemy snake is at a valid maze-cell boundary, and decide whether to continue
-; current direction or change it based on a random choice or advanced AI
-; The result is stored in desired_snake_direction
+; current direction or change it based on a random choice or to reach player / egg locations
+; The result is stored in planned_direction
 
-choose_enemy_snake_direction
+decide_snake_planned_direction
 
     ldx snake_colour  ;0: player snake, 1: dangerous enemy snake, 2: weak enemy snake
-	bne .continue_enemy_snake_direction  ;branch for an enemy snake only
+	bne .decide_enemy_planned_direction  ;branch for an enemy snake only
 .end_enemy_snake_direction
     rts
 
-.continue_enemy_snake_direction
+.decide_enemy_planned_direction
     bit maze_cell_boundary_flag
 	bmi .end_enemy_snake_direction  ;not at a point in maze cell to check for a direction change
 	jsr advance_random_state  ;pseudo-random value in A
@@ -2473,38 +2592,38 @@ choose_enemy_snake_direction
 	and #%00000011  ;3
 	clc
 	adc #1  ;direction value down, up, left, right in A
-	ldy current_segment_direction
+	ldy current_direction
 	cmp data_directions-1,y
 	bne *+3  ;skip next instruction
-	tya  ;keep current_segment_direction
-    sta desired_snake_direction  ;store current_segment_direction or new direction in A
+	tya  ;keep current_direction
+    sta planned_direction  ;store current_direction or new direction in A
 	rts
 
 .perform_advanced_direction_turn
-    lda current_segment_direction
+    lda current_direction
 	cpx #2  ;2 = weak enemy snake
 	beq .move_toward_player_egg
 	bit $77
-	bpl .try_horizontal_movement
+	bpl .try_horizontal_movement_towards_player
 
-.try_vertical_movement
+.try_vertical_movement_towards_player
     ldx #DIRECTION_UP
 	ldy screen_row
-    cpy player_body_segments+7  ;snake head row
-	beq .try_horizontal_movement
+    cpy player_snake_head_row
+	beq .try_horizontal_movement_towards_player
 	bcs .save_snake_direction
 	ldx #DIRECTION_DOWN
 
 .save_snake_direction
     cmp data_directions-1,x
 	beq *+4  ;skip next instruction
-	stx desired_snake_direction  ;down, up, left, right
+	stx planned_direction  ;down, up, left, right
     rts
 
-.try_horizontal_movement
+.try_horizontal_movement_towards_player
     ldx #DIRECTION_LEFT
 	ldy screen_column
-	cpy player_body_segments+6  ;snake head column
+	cpy player_snake_head_column
 	beq .retry_vertical_movement_or_exit
 	bcs .save_snake_direction
 	ldx #DIRECTION_RIGHT
@@ -2512,8 +2631,8 @@ choose_enemy_snake_direction
 
 .retry_vertical_movement_or_exit
     ldy screen_row
-	cpy player_body_segments+7  ;snake head row
-	bne .try_vertical_movement
+	cpy player_snake_head_row
+	bne .try_vertical_movement_towards_player
 
 .exit_enemy_snake_direction
     rts
@@ -2538,9 +2657,8 @@ choose_enemy_snake_direction
 	bne .save_snake_direction  ;always branch
 
 ;--------------------------------------------------------------------------------------------------
-;   Pseudo-random number generator 
-;   Used for frog placement, enemy decisions, egg/timer variation, etc.
-;   Updates the 4-byte pseudo-random state in zero page $77..$7a
+; Pseudo-random number generator used for frog placement, enemy decisions, egg/timer variation, etc.
+; Updates the 4-byte pseudo-random state in zero page $77..$7a.
 
 advance_random_state
 
@@ -2582,6 +2700,7 @@ initialise_pseudo_random_values
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Decrements the per-snake tick counters used to pace AI, egg, and frog-related actions.
 
 update_snake_tick_counters
 
@@ -2599,7 +2718,7 @@ update_snake_tick_counters
 	rts
 
 ;--------------------------------------------------------------------------------------------------
-; disintegrating snake sprites
+; Disintegrating snake sprites
 
 dead_snake_part_1
     !byte %00000000
@@ -2662,7 +2781,7 @@ dead_snake_part_6
     !byte %00000000
 
 ;--------------------------------------------------------------------------------------------------
-; dead snake animation addresses
+; Dead snake animation addresses
 
 dead_snake_part_address_low
 	!byte <dead_snake_part_1
@@ -2681,13 +2800,14 @@ dead_snake_part_address_high
 	!byte >dead_snake_part_6
 
 ;--------------------------------------------------------------------------------------------------
+; Animates a dying snake breaking into the six pre-defined dead-snake bitmap frames.
 
 dead_snake_animation
 
     ldx snake_data_pointer
 	sta temp4
 	lda player_and_enemy_table,x  ;player or enemy snake number of segments
-	sta body_segments
+	sta snake_length
 	txa
 	clc
 	adc #7
@@ -2710,11 +2830,12 @@ dead_snake_animation
 	jsr plot_bitmap_on_screen
 .skip_to_next_segment
     jsr add_3_to_point_to_next_segment
-	dec body_segments
+	dec snake_length
 	bne .dead_snake_animate_loop
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Calculates the head, body, and egg score awards from the current maze level.
 
 calculate_score_values_for_maze
 
@@ -2766,6 +2887,7 @@ calculate_score_values_for_maze
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Adds a new segment to the player or enemy snake, depending on entry point.
 
 add_segment_to_player_body
 
@@ -2835,6 +2957,7 @@ add_segment_to_player_or_enemy_snake_body
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Applies the status updates and redraw required after a snake has lost one or more body segments.
 
 handle_eat_snake_body_update
 
@@ -2859,6 +2982,7 @@ perform_eat_snake_body_update
     rts
 
 ;--------------------------------------------------------------------------------------------------
+; Tests whether the player snake head occupies an enemy head coordinate thus eating it.
 
 check_if_player_eats_enemy_snake_head
 
@@ -2882,6 +3006,7 @@ check_if_player_eats_enemy_snake_head
     rts
 
 ;--------------------------------------------------------------------------------------------------
+; Resolves all player/enemy head and body collisions for the current game tick.
 
 handle_player_and_enemy_snake_interactions
 
@@ -2909,7 +3034,7 @@ handle_player_and_enemy_snake_interactions
     ;----------------------------------------------------------------------------------------------
     ; check if player snake eats an enemy body segment
 	lda enemy_snake_table,x  ;enemy snake number of segments
-	sta body_segments
+	sta snake_length
 	ldx snake_data_pointer
 	ldy #2
 .check_if_player_eats_a_segment_loop
@@ -2953,7 +3078,7 @@ handle_player_and_enemy_snake_interactions
 	clc
 	adc #3
 	sta snake_data_pointer
-	dec body_segments
+	dec snake_length
 	beq .continue_to_next_snake
 
 	jsr check_if_player_eats_enemy_snake_head
@@ -2995,9 +3120,9 @@ handle_player_and_enemy_snake_interactions
 
     ;----------------------------------------------------------------------------------------------
     ; check if enemy snake eats any player body segments
-	ldx player_body_segments
+	ldx player_snake_length
 	dex
-	stx body_segments
+	stx snake_length
 	ldx #9
 .check_if_an_enemy_eats_any_segments_loop
 
@@ -3034,7 +3159,7 @@ handle_player_and_enemy_snake_interactions
 	clc
 	adc #3  ;to point to next player snake body segment data
 	tax
-	dec body_segments
+	dec snake_length
 	bne .check_if_an_enemy_eats_any_segments_loop
 
 .skip_to_next_enemy_snake
@@ -3061,7 +3186,7 @@ handle_player_and_enemy_snake_interactions
 	lda $34,x
 	beq .eat_snake_body_segment
 	lda player_and_enemy_table_word,y  ;enemy snake number of segments
-	cmp player_body_segments
+	cmp player_snake_length
 	bcc .enemy_snake_is_smaller_than_player_so_eat_it
 	jmp handle_player_dies  ;enemy snake is bigger so player dies
 
@@ -3140,7 +3265,7 @@ handle_player_and_enemy_snake_interactions
     ldx #31  ;point to first snake table data
 .check_for_weak_next_snake_loop
     lda enemy_snake_table,x  ;enemy snake number of segments
-	cmp player_body_segments
+	cmp player_snake_length
 	bcc .enemy_snake_is_smaller_than_player
 	lda #1  ;red colour snake
 	!byte $2c  ; $2c is the bit (absolute) opcode
@@ -3176,6 +3301,7 @@ handle_player_and_enemy_snake_interactions
     !source "junk1.asm"
 
 ;--------------------------------------------------------------------------------------------------
+; Snake egg sprites
 
 enemy_snake_egg_sprite
     !byte %00000000
@@ -3186,7 +3312,6 @@ enemy_snake_egg_sprite
     !byte %11101110
     !byte %00111000
     !byte %00000000
-
 
 player_snake_egg_sprite
     !byte %00000000
@@ -3214,6 +3339,7 @@ data_enemy_snake_table_offsets
 	!byte 91
 
 ;--------------------------------------------------------------------------------------------------
+; Clears egg-related variables at the start of the new player life routine.
 
 clear_egg_variables
 
@@ -3243,6 +3369,7 @@ set_egg_countdown_timer
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Erases the developing-egg bitmap at the stored enemy egg location.
 
 clear_developing_egg_sprite
 
@@ -3253,6 +3380,7 @@ clear_developing_egg_sprite
 	jmp erase_bitmap_on_screen
 
 ;--------------------------------------------------------------------------------------------------
+; Advances the shared egg countdown and changes egg status when its timer expires.
 
 update_egg_timers
 
@@ -3273,6 +3401,7 @@ update_egg_timers
     rts
 
 ;--------------------------------------------------------------------------------------------------
+; Clears the developing-egg state for a dead enemy snake or where a segment has been eaten.
 
 reset_developing_egg_status_for_enemy_snake
 
@@ -3288,6 +3417,7 @@ reset_developing_egg_status_for_enemy_snake
     rts
 
 ;--------------------------------------------------------------------------------------------------
+; Handles enemy and player egg state changes, laying, hatching, eating, and replacement snakes.
 
 handle_player_and_enemy_snake_eggs
 
@@ -3341,6 +3471,7 @@ handle_player_and_enemy_snake_eggs
 	bmi .goto_perform_player_egg_actions  ;always branch
 
 ;--------------------------------------------------------------------------------------------------
+; Handles the enemy egg state for the snake selected in enemy_snake_with_egg.
 
 perform_enemy_snake_egg_actions
 
@@ -3365,7 +3496,7 @@ perform_enemy_snake_egg_actions
 
     ; set the snake colour
 	lda #2
-	cmp player_body_segments
+	cmp player_snake_length
 	bcs *+3  ;skip next instruction
 	iny  ;change to weak green colour snake
     tya  ;keep with normal red colour snake
@@ -3496,6 +3627,7 @@ perform_enemy_snake_egg_actions
 	jsr plot_bitmap_on_screen
 
 ;--------------------------------------------------------------------------------------------------
+; Handles the player egg state for the snake selected in enemy_snake_with_egg.
 
 perform_player_egg_actions
 
@@ -3606,15 +3738,16 @@ perform_player_egg_actions
 	beq .end_screen_coordinates_for_last_segment
 
     ; lay the developing egg for the player
-	lda player_body_segments
+	lda player_snake_length
 	asl
-	adc player_body_segments
+	adc player_snake_length
 	adc #4
 	sta temp_snake_data_pointer2  ;points to the segment holding the egg to be laid
 	jsr get_screen_coordinates_for_sprite  ;get this screen coordinate for plotting on screen
 	jmp .plot_player_egg_on_screen
 
 ;--------------------------------------------------------------------------------------------------
+; Draws or erases the player egg.
 
 perform_plot_player_egg_on_screen
 
@@ -3631,6 +3764,7 @@ perform_plot_player_egg_on_screen
 	jmp plot_bitmap_on_screen
 
 ;--------------------------------------------------------------------------------------------------
+; Loads screen_column and screen_row from the last segment of the selected snake.
 
 get_screen_coordinates_for_last_segment
 
@@ -3652,6 +3786,7 @@ get_screen_coordinates_for_last_segment
     rts
 
 ;--------------------------------------------------------------------------------------------------
+; Copies the current working screen coordinates into the selected egg-location variables.
 
 set_egg_screen_column_row
 
@@ -3659,12 +3794,12 @@ set_egg_screen_column_row
 	sta player_egg_location_column
 	lda screen_row
 	sta player_egg_location_row
-	lda current_segment_direction
+	lda current_direction
 	sta $2a
 	rts
 
 ;--------------------------------------------------------------------------------------------------
-; frog sprite data
+; Frog sprite data
 
 data_frog_top_left
     !byte %00001010
@@ -3707,6 +3842,7 @@ data_frog_bottom_right
     !byte %00000000
 
 ;--------------------------------------------------------------------------------------------------
+; Frog direction movement increments.
 
 data_frog_column_increments
     !byte 0
@@ -3749,6 +3885,7 @@ data_to_get_frog_column_increments
 	!byte 11
 
 ;--------------------------------------------------------------------------------------------------
+; Selects the frog display indicator and on-screen display duration.
 
 set_frog_to_display_on_screen
 
@@ -3762,6 +3899,7 @@ goto_advance_random_state
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Tests whether the frog eats a player or enemy snake egg.
 
 check_if_frog_eats_egg
 
@@ -3769,7 +3907,7 @@ check_if_frog_eats_egg
 	sty screen_row
 
 	ldx #1
-.check_if_frog_eats_egg_loop
+.check_if_frog_eats_egg_2_loop
     lda screen_column,x
 	sec
 	sbc frog_location_column,x  ;subtracts $41 (frog_location_column), $42 (frog_location_row)
@@ -3780,7 +3918,7 @@ check_if_frog_eats_egg
     cmp #9
 	bcs .egg_not_eaten_keep_egg_status_as_is
 	dex
-	bpl .check_if_frog_eats_egg_loop
+	bpl .check_if_frog_eats_egg_2_loop
 
 	jsr clear_block_at_screen_coordinates  ;egg is cleared from screen
 	lda #0  ;egg is eaten, the new egg status (no egg) is returned in A
@@ -3791,6 +3929,7 @@ check_if_frog_eats_egg
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Handles frog on-screen display time, movement, eating eggs and whether it is eaten.
 
 handle_frog_actions
 
@@ -3963,7 +4102,7 @@ handle_frog_actions
 	sty screen_row
 
 	ldx #1
-.check_if_frog_is_eats_egg_loop
+.check_if_frog_eats_egg_1_loop
     ldy data_to_switch_frog_increments,x  ;Y is 0 or 2
 	lda frog_location_column,x
 	sec
@@ -3985,7 +4124,7 @@ handle_frog_actions
 	cmp #9
 	bcs .frog_does_not_eat_egg
 	dex
-	bpl .check_if_frog_is_eats_egg_loop
+	bpl .check_if_frog_eats_egg_1_loop
 
 .no_hatchable_egg_for_frog_to_eat
     ldy #255
@@ -4071,6 +4210,7 @@ plot_frog_sprite_on_screen
     jmp plot_bitmap_on_screen
 
 ;--------------------------------------------------------------------------------------------------
+; VIC register values used at game initialisation.
 
 data_vic_system_registers
     !byte %00001100  ;_VIC_SCREEN_LEFT_EDGE = $9000  ;36864 bits 0-6 horizontal centering, bit 7 sets interlace scan
@@ -4100,23 +4240,24 @@ data_vic_system_registers
 	!byte 0  ;_VIC_SOUND_ALTO = $900b  ;36875
 	!byte 0  ;_VIC_SOUND_SOPRANO = $900c  ;36876
 	!byte 0  ;_VIC_SOUND_NOISE = $900d  ;36877
-	!byte %00100000  ;_VIC_AUX_COLOUR = $900e  ;36878 bit 7-4 aux colour is 2 for red
-                     ;_VIC_VOLUME = $900e  ;36878 bit 3-0 is 0 for no volume
+	!byte %00100000  ;_VIC_VOLUME_AUX_COLOUR = $900e  ;36878 
+                     ;  bit 7-4 aux colour is 2 for red
+                     ;  bit 3-0 is 0 for no volume
 	!byte %00001110  ;_VIC_BG_BORDER_COL = $900f  ;36879
                      ;  bit 7-4 is 0 for black background
                      ;  bit 3-0 is 14 for blue border
 
 ;--------------------------------------------------------------------------------------------------
-; Initialise Vic system registers and timers
+; Initialise Vic system registers and timers.
 
 init_system_registers_and_timers
 
     ldy #15
-.init_data_loop
+.init_registers_loop
     lda data_vic_system_registers,y
 	sta $9000,y  ;store in $9000 to $900f
 	dey
-	bpl .init_data_loop
+	bpl .init_registers_loop
 
     ; set auxiliary timers
 	lda #64
@@ -4132,6 +4273,8 @@ init_system_registers_and_timers
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Perform initialisation, draw maze and set enemy snake positions.
+; Called when setting up the starting title screen and at game-over ready to restart time.
 
 draw_maze_and_set_enemy_snake_start_position
 
@@ -4186,6 +4329,7 @@ read_joystick_to_start_game
 	jmp .save_screen_alignment
 
 ;--------------------------------------------------------------------------------------------------
+; Scrolling heading message text.
 
 data_scrolling_heading_message
 
@@ -4217,6 +4361,7 @@ data_scrolling_heading_message
 	!byte 0
 
 ;--------------------------------------------------------------------------------------------------
+; Copies a twenty-character window of the scrolling message into scroll_message_store.
 
 prepare_scroll_message
 
@@ -4233,6 +4378,7 @@ prepare_scroll_message
 	bne .store_scroll_message_line  ;always branch
 
 ;--------------------------------------------------------------------------------------------------
+; Draws one scrolling-message frame, shifting the display position until a new text window is needed.
 
 display_scroll_message
 
@@ -4296,6 +4442,7 @@ display_scroll_message
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Title screen heading text
 
 data_heading_publisher
 	!pet "creative"
@@ -4314,6 +4461,8 @@ data_heading_game_title
 	!byte $00
 
 ;--------------------------------------------------------------------------------------------------
+; Builds and displays the title screen, plays the opening tune, and waits for fire button press
+; to start game.
 
 display_opening_title_screen
 
@@ -4324,7 +4473,7 @@ display_opening_title_screen
     ; prepare start up sound
 	jsr clear_all_sound_channels
 	lda #%00101010  ;aux colour red, volume 10
-	sta _VIC_VOLUME
+	sta _VIC_VOLUME_AUX_COLOUR
 	ldx #<data_starting_game_on_sound_clip
 	ldy #>data_starting_game_on_sound_clip
 	jsr prepare_sound_data
@@ -4402,7 +4551,7 @@ display_opening_title_screen
 
     jsr display_scroll_message
 	jsr handle_enemy_snake_movement
-	jsr read_joystick_to_start_game  ;exits loop to start game, see start_game_play
+	jsr read_joystick_to_start_game  ;fire button exits loop to start game, see start_game_play
 	jsr play_sounds
 
 	dec sound_loop_counter
@@ -4411,6 +4560,7 @@ display_opening_title_screen
 	beq .play_main_theme_tune  ;always branch
 
 ;--------------------------------------------------------------------------------------------------
+; Sound effects data.
 
 data_eat_frog_egg_enemy_head_sound_clip_extra
     !byte $01, $ca, $01, $cc, $01, $ce, $01, $d0
@@ -4530,6 +4680,7 @@ data_eat_snake_body_2_sound_clip
 	!byte $ff
 
 ;--------------------------------------------------------------------------------------------------
+; Plays the initial sounds when about to start a player life.
 
 play_about_to_start_maze_tune
 
@@ -4548,6 +4699,7 @@ play_about_to_start_maze_tune
 	jmp prepare_snake_hissing_sound
 
 ;--------------------------------------------------------------------------------------------------
+; Prepares the sound clip played when a frog, egg, or enemy head is eaten.
 
 prepare_eat_frog_egg_snake_head_sound
 
@@ -4556,6 +4708,7 @@ prepare_eat_frog_egg_snake_head_sound
 	jmp prepare_sound_data
 
 ;--------------------------------------------------------------------------------------------------
+; Sound data for the periodic snake-hissing effect.
 
 data_snake_hissing_sound_clip_extra
 	!byte $28, $fe, $28, $00, $ff
@@ -4567,6 +4720,7 @@ data_snake_hissing_sound_clip
 	!byte $ff
 
 ;--------------------------------------------------------------------------------------------------
+; Periodically triggers the snake-hissing clip while gameplay is active.
 
 play_snake_hissing_sound
 
@@ -4576,7 +4730,7 @@ prepare_snake_hissing_sound
     lda #80
 	sta sound_hiss_counter
 	lda #%00101111  ;aux colour red, volume 15
-	sta _VIC_VOLUME
+	sta _VIC_VOLUME_AUX_COLOUR
 	ldx #<data_snake_hissing_sound_clip
 	ldy #>data_snake_hissing_sound_clip
 	jmp prepare_sound_data
@@ -4585,6 +4739,7 @@ prepare_snake_hissing_sound
     rts
 
 ;--------------------------------------------------------------------------------------------------
+; Handles player death sounds, animations, life loss, hatching player egg (if there) and game over.
 
 handle_player_dies
 
@@ -4608,7 +4763,7 @@ handle_player_dies
 	lda data_enemy_snake_table_offsets,x
 	tax
 	lda player_and_enemy_table,x
-	sta body_segments  ;points to player or enemy snake number of segments
+	sta snake_length  ;points to player or enemy snake number of segments
 	lda #1
 	sta snake_colour  ;is 0 for player snake, 1 or 2 for enemy
 	txa
@@ -4632,7 +4787,7 @@ clear_maze_objects_and_player_loses_life
 
     ; life lost, play next one
 	lda #3
-	sta player_body_segments
+	sta player_snake_length
 
 	ldx #4
 .delay_using_X_0
@@ -4644,6 +4799,7 @@ clear_maze_objects_and_player_loses_life
 	jmp play_one_life
 
 ;--------------------------------------------------------------------------------------------------
+; Presents the game-over sequence, checks the high score, and waits for the player to restart.
 
 end_of_game
 
@@ -4698,6 +4854,7 @@ end_of_game
     jmp start_game_play
 
 ;--------------------------------------------------------------------------------------------------
+; Final short sound clip used at end of game.
 
 data_last_post_end_sound_clip_extra
 	!byte $19, $9c, $01, $00, $0f, $9c, $01, $00
@@ -4716,6 +4873,7 @@ data_last_post_end_sound_clip
 	!byte $ff
 
 ;--------------------------------------------------------------------------------------------------
+; Starts the return-home animation for a newly hatched player snake (adds player life).
 
 start_baby_snake_goes_home
 
@@ -4733,7 +4891,7 @@ start_baby_snake_goes_home
 	dex
 	bne .delay_using_X_4_1
 
-	jsr play_sound
+	jsr play_baby_egg_hatch_sound
 
 	lda #0
 	sta player_egg_status  ;set to zero (no egg)
@@ -4746,19 +4904,20 @@ start_baby_snake_goes_home
 	dex
 	bpl .apply_egg_coords_loop
 
-	lda player_body_segments
+	lda player_snake_length
 	pha
 	lda #1
-	sta player_body_segments
+	sta player_snake_length
 	jsr add_segment_to_player_body
 	ldy #0
 	jsr perform_player_or_enemy_snake_movement  ;player snake
 	jsr player_or_baby_snake_goes_home_loop
 	pla
-	sta player_body_segments
+	sta player_snake_length
 	jmp add_one_to_player_lives
 
 ;--------------------------------------------------------------------------------------------------
+; Moves the player or baby snake through the scripted route back into the home enclosure.
 
 player_snake_goes_home
 
@@ -4769,7 +4928,7 @@ player_snake_goes_home
 
 player_or_baby_snake_goes_home_loop
     lda #166  ;right edge column
-    cmp player_body_segments+6  ;snake head column
+    cmp player_snake_head_column
 	beq .check_outside_home_row
 	jsr .set_snake_header_screen_coords_and_check_direction
 	beq .move_snake_right_and_down_check_near_home
@@ -4781,7 +4940,7 @@ player_or_baby_snake_goes_home_loop
     jsr .move_snake_to_the_right
 	bcc .perform_snake_movement_in_loop  ;direction change is allowed
 	lda #DIRECTION_DOWN
-    ldx player_body_segments+7  ;snake head row
+    ldx player_snake_head_row
     cpx #119  ;outside player snake home door row?
 	bcc .move_snake_and_get_a_new_direction
 	lda #DIRECTION_UP
@@ -4789,7 +4948,7 @@ player_or_baby_snake_goes_home_loop
 .move_snake_and_get_a_new_direction
     jsr .set_snake_direction  ;up
 	bcc .move_snake_and_check_direction  ;direction change is allowed
-	ldy desired_snake_direction
+	ldy planned_direction
 	lda data_directions-1,y
 	bne .move_snake_and_get_a_new_direction
 
@@ -4799,11 +4958,11 @@ player_or_baby_snake_goes_home_loop
 	bne .move_snake_and_check_direction
 	jsr .move_snake_to_the_right
 	bcc .perform_snake_movement_in_loop  ;direction change is allowed
-	lda player_body_segments+5 ;snake head direction
+	lda player_snake_head_direction
 	bne .move_snake_and_get_a_new_direction
 
 .check_outside_home_row
-    lda player_body_segments+7  ;snake head row
+    lda player_snake_head_row
     cmp #118  ;outside player snake home door row?
 	beq .open_door_and_get_into_home
 	jsr .set_snake_header_screen_coords_and_check_direction
@@ -4863,7 +5022,7 @@ player_or_baby_snake_goes_home_loop
     lda #DIRECTION_RIGHT
 .set_snake_direction
     sta player_snake_direction  ;right
-	sta desired_snake_direction  ;right
+	sta planned_direction  ;right
 	jsr .set_snake_header_screen_coords_and_check_direction
 	jmp check_if_direction_change_is_valid
 
@@ -4888,11 +5047,12 @@ player_or_baby_snake_goes_home_loop
 	jmp delay_using_Y
 
 ;--------------------------------------------------------------------------------------------------
+; Plays a short sound effect when the baby snake hatches at the end of maze or player life.
 
-play_sound
+play_baby_egg_hatch_sound
 
     lda #%00101111  ;aux colour red, volume 15
-	sta _VIC_VOLUME
+	sta _VIC_VOLUME_AUX_COLOUR
 	ldx #255
 .play_sound_loop
     ldy #56
@@ -4904,10 +5064,11 @@ play_sound
 	dex
 	bne .play_sound_loop
 	lda #%00101010  ;aux colour red, volume 10
-	sta _VIC_VOLUME
+	sta _VIC_VOLUME_AUX_COLOUR
 	rts
 
 ;--------------------------------------------------------------------------------------------------
+; Advances maze_level after a cleared maze. Maximum maze level is fixed at 99.
 
 set_maze_level_to_next_one
 
@@ -4920,6 +5081,8 @@ set_maze_level_to_next_one
     rts
 
 ;--------------------------------------------------------------------------------------------------
+; Completes a cleared-maze transition: sends the player home, sends a baby snake home (if present)
+; and starts the next maze.
 
 player_has_eaten_all_enemy_snakes
 
@@ -4931,8 +5094,8 @@ player_has_eaten_all_enemy_snakes
 	jsr update_snake_tick_counters
 	lda #0
 	sta snake_colour  ;is 0 for player snake, 1 or 2 for enemy
-	lda player_body_segments
-	sta body_segments  ;points to player or enemy snake number of segments
+	lda player_snake_length
+	sta snake_length  ;points to player or enemy snake number of segments
 	lda #7
 	jsr plot_entire_snake_on_screen
 	ldy #17
@@ -4953,6 +5116,7 @@ player_has_eaten_all_enemy_snakes
     jmp play_one_life
 
 ;--------------------------------------------------------------------------------------------------
+; Erases all dynamic maze objects - enemy snakes, eggs, and frog.
 
 clear_maze_objects
 
@@ -4999,6 +5163,7 @@ clear_maze_objects
     rts
 
 ;--------------------------------------------------------------------------------------------------
+; Sound effects data for the player-home and baby-snake-home transition effects.
 
 data_player_goes_home_sound_clip_extra
 	!byte $06, $cd, $06, $c3, $18, $00, $06, $c3
