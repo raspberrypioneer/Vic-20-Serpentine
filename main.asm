@@ -1,9 +1,18 @@
 ; Serpentine for the Commodore Vic20
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; System addresses
 
-_SCREEN_ADDR = $1000  ;4096
+; _BITMAP_GRID is the video matrix, the physical screen memory area. The VIC chip reads this via DMA
+; to layout the screen coordinate grid. In this bitmap configuration, holds a fixed, sequential array
+; of character index numbers ($00, $01, $02...) populated in initialise_bitmap_grid_index.
+_BITMAP_GRID = $0200  ;512
+
+; _BITMAP_CANVAS is the character generator RAM and provides the memory area of the bitmap canvas.
+; Changing bytes here alters the 8-byte pixel blocks assigned to screen tiles, and is used to plot 
+; shapes and sprites in plot_bitmap_on_screen, erase_bitmap_on_screen and other routines.
+_BITMAP_CANVAS = $1000  ;4096
+
 _COLOUR_SCREEN_ADDR = $9600  ;38400
 
 _VIC_SCREEN_LEFT_EDGE = $9000  ;36864 left edge of TV picture
@@ -18,7 +27,7 @@ _VIA_JOYSTICK_MIRROR  = $911f  ;37151 mirror of $9111 (37137) port A I/O registe
 _VIA_KEYB_ROWS        = $9120  ;37152 port B I/O register
 _VIA_DATADIR_B        = $9122  ;37154 data direction register for port B
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; Joystick constants
 
 JOY_RIGHT = 1
@@ -27,7 +36,7 @@ JOY_DOWN = 4
 JOY_LEFT = 8
 JOY_FIRE = 16
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; Snake direction constants
 
 DIRECTION_UP = 1
@@ -35,7 +44,7 @@ DIRECTION_DOWN = 2
 DIRECTION_RIGHT = 3
 DIRECTION_LEFT = 4
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; Sound voice constants
 
 SOUND_BASS = 1
@@ -43,12 +52,20 @@ SOUND_ALTO = 2
 SOUND_SOPRANO = 3
 SOUND_NOISE = 4
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
+; Maze part constants
+
+WALL_SINGLE_GREEN_SQUARE = 0  ;"single green square"
+WALL_HORIZONTAL = 1  ;"horizontal wall section with green square on left" and "horizontal wall section"
+WALL_VERTICAL = 2  ;"vertical wall section with green spare on top" and "vertical wall section"
+WALL_VERTICAL_AND_HORIZONTAL = 3  ;the two above combined
+
+;--------------------------------------------------------------------------------------------------
 ; Other constants
 
-column_spacing = 176  ;each column is 176 pixels apart (11 rows x 16 pixels high), see _VIC_CR3
+column_spacing = 176  ;each column is 176 pixels apart (11 rows x 16-pixels tall), see _VIC_CR3
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; Zero page addresses
 
 bitmap_screen_address_low  = $00
@@ -57,20 +74,26 @@ bitmap_screen_address_high = $01
 bitmap_bit_shift = $02  ;is the horizontal bit shift amount (0–7)
 bitmap_spill_bits = $03  ;holds the "spill" bits to be written into the next screen byte when a sprite crosses an 8-bit boundary
 
+temp_snake_data_pointer1 = $05  ;variable for player or enemy snake data table pointer
+temp_snake_data_pointer2 = $06  ;variable for player or enemy snake data table pointer often segments
+
 body_segments = $07  ;value of snake body segments counting the head as a segment
 snake_colour = $08  ;colour 0: player snake, 1: dangerous enemy snake, 2: weak enemy snake
-snake_direction = $09
-pixel_data_low = $10
-pixel_data_high = $11
+desired_snake_direction = $09  ;is the planned direction
 snake_in_home_or_maze = $0a  ;initially #128 (ready to leave home), #255 (reached home), #0 (left home, in maze)
 snake_active_indicator = $0b
-direction_change_indicator = $0c
+pending_direction_change = $0c  ;is the in-flight transition between the desired_snake_direction and current_segment_direction
+screen_coords_table = $0d  ;$0d (current_segment_direction), $0e (screen_column), $0f (screen_row)
+current_segment_direction = $0d  ;(dual use label) is the direction actually being used for this segment
 maze_part_to_plot = $0d  ;dual use label
-screen_coords_table = $0d  ;$0d (segment_direction), $0e (screen_column), $0f (screen_row)
-segment_direction = $0d  ;dual use label
 
 screen_column = $0e
 screen_row = $0f
+
+pixel_data_low = $10
+pixel_data_high = $11
+
+temp1 = $12
 
 maze_cell_boundary_flag = $13  ;bit7 = 0 when snake head is aligned to a maze cell boundary, 1 otherwise
 snake_direction_pointer_to_test = $14  ;0, 1, 2, 3 for checking if snake / segment direction is allowed
@@ -79,10 +102,14 @@ maze_address_high = $16
 maze_index = $17
 
 player_lives = $18
-current_maze = $19
+maze_level = $19
+
+player_snake_speed_reload = $1a
+player_snake_speed_counter = $1b
 enemy_snake_speed_reload = $1c
 enemy_snake_speed_counter = $1d
 snake_data_pointer = $1e  ;pointer to data in player_and_enemy_table
+game_speed_counter = $1f
 
 egg_countdown_low  = $20
 egg_countdown_high = $21
@@ -118,9 +145,9 @@ score_for_eat_egg_low = $4c
 score_for_eat_egg_high = $4d
 
 new_last_segment_pointer = $50  ;dual use label, points to the segment data for an added new segment
-temp1 = $50  ;dual use label
-temp2 = $51
-temp3 = $52
+temp2 = $50  ;dual use label
+temp3 = $51
+temp4 = $52
 data_index = $5c
 
 sound_hiss_counter = $53
@@ -147,12 +174,12 @@ snake_1_body_segments = $9f  ;number of body segments
 snake_2_body_segments = $bd  ;number of body segments
 snake_3_body_segments = $db  ;number of body segments
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; Other storage addresses
 
 scroll_message_store = $0100  ;starting address of the scrolling message text (holds 20 characters)
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; Start program, game was originally a cartridge so no basic loader
 
 * = $a000
@@ -163,7 +190,7 @@ scroll_message_store = $0100  ;starting address of the scrolling message text (h
 	!byte >start_of_program  ;warm / reset start vector (high)
     !pet "a0CBM"  ;start of signature a0CBM
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; Player snake table, data is saved in zero page $80 +
 ; See references to zero page data for each snake in player_and_enemy_table, player_and_enemy_table_word
 
@@ -184,7 +211,7 @@ data_player_snake_for_zero_page
 
     !byte $aa, $aa, $aa, $aa, $aa, $aa, $aa
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; Enemy snake table for each snake, data is saved in zero page locations
 ; $9e + for snake 1, $bc + for snake 2, $da + for snake 3
 ; See references to zero page data for each snake in player_and_enemy_table, player_and_enemy_table_word
@@ -194,7 +221,7 @@ data_enemy_snake_for_zero_page
 
     ; enemy snake table starts here
 	!byte $06  ;$9f number of enemy snake body segments
-	!byte $01  ;snake colour number: 1 is red (dangerous), changes to 2 is yellow (weak)
+	!byte $01  ;snake colour number, 1: dangerous enemy snake, 2: weak enemy snake
 	!byte $00  ;snake direction
 	!byte $80  ;snake in home or maze: #128 (ready to leave home), #255 (reached home), #0 (left home, in maze)
 	!byte $80  ;snake active indicator
@@ -209,7 +236,7 @@ data_enemy_snake_for_zero_page
 
     !byte $aa, $aa, $aa, $aa, $aa, $aa
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 start_of_program
 
@@ -221,7 +248,7 @@ start_of_program
 
     ; perform start of game actions
 	lda #1
-	sta current_maze
+	sta maze_level
 	jsr zero_player_and_high_score
 	jsr initialise_pseudo_random_values
 	jsr display_opening_title_screen
@@ -230,7 +257,7 @@ start_game_play
 
 	jsr clear_all_sound_channels
 	jsr set_screen_base_colours
-	jsr initialise_0200_onwards_with_increments_of_11
+	jsr initialise_bitmap_grid_index  ;is unnecessary to call this routine again
 	jsr check_for_new_high_score
 	ldx #3
 	stx player_lives
@@ -239,9 +266,9 @@ start_game_play
 	stx $5a
 	jsr zero_player_score
 	lda #1
-	sta current_maze
+	sta maze_level
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 play_one_life
 
@@ -251,7 +278,7 @@ play_one_life
 	jsr clear_egg_variables
 	jsr clear_screen_and_add_heading_block
 	jsr initialise_zero_page
-	jsr draw_maze
+	jsr draw_maze_on_screen
 	jsr plot_level_and_headings_on_screen
 	jsr plot_high_score_on_screen
 	jsr plot_player_score_on_screen
@@ -272,22 +299,28 @@ play_one_life
 	jsr play_sounds
 	jsr play_snake_hissing_sound
 	jsr get_joystick_movement
-	dec $1f
+	dec game_speed_counter  ;decrease speed counter, will cycle from 0 to 255
 	bne .game_play_loop
+
+    ; perform snake speeds controls when the game_speed_counter is zero
+    ; increase enemy snake speed by increasing the reload value (higher is faster, see handle_enemy_snake_movement)
 	ldx enemy_snake_speed_reload
 	inx
 	cpx #11
-	bcs .keep_max_speed_control_at_11
-	stx enemy_snake_speed_reload
-.keep_max_speed_control_at_11
-	ldx $1a
+	bcs .check_player_speed_control
+	stx enemy_snake_speed_reload  ;enemy snake speed reload does not exceed 10 (fastest value)
+
+.check_player_speed_control
+    ; reduce player speed by reducing the speed reload value (lower is slower, see handle_player_movement)
+    ; reload values are between 14 (maze level 1) to 10 (from maze level 4) initially, but can reduce to 8
+	ldx player_snake_speed_reload
 	dex
 	cpx #8
 	bcc .game_play_loop
-	stx $1a
+	stx player_snake_speed_reload  ;player snake reload speed control does not exceed 8 (slowest value)
 	bcs .game_play_loop  ;always branch
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 initialise_zero_page
 
@@ -298,18 +331,20 @@ initialise_zero_page
 	dey
 	bne .init_zero_page_loop
 
-	lda #10
-	ldx current_maze
-	cpx #5
-	bcs .alternate_zero_page_value
-	lda #15
+    ; assign player speed controls, slowing the player down a bit as maze level increases
+	lda #10  ;8 is slowest, so 10 is quite slow
+	ldx maze_level
+	cpx #5  ;slower speeds from maze level 5
+	bcs .store_player_speed_controls
+	lda #15  ;faster speed, adjusted down by maze level
 	sec
-	sbc current_maze
-.alternate_zero_page_value
-	sta $1b
-	sta $1a
+	sbc maze_level
+.store_player_speed_controls
+	sta player_snake_speed_counter
+	sta player_snake_speed_reload
 
-	lda #4
+    ; assign enemy snake speed controls
+	lda #4  ;10 is fastest, so 4 is quite slow
 	sta enemy_snake_speed_counter
 	sta enemy_snake_speed_reload
 
@@ -334,10 +369,10 @@ initialise_zero_page
 	sta snake_tick_table,x  ;initialise all to zero
 	dex
 	bpl .clear_zero_page_2e_33
-	sta $1f
+	sta game_speed_counter
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 	ldy #1
 delay_using_Y
@@ -354,12 +389,12 @@ delay_using_Y
 	tax
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 direction_list
 	!byte JOY_UP, JOY_DOWN, JOY_RIGHT, JOY_LEFT, JOY_FIRE
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 get_joystick_movement
 
@@ -392,7 +427,7 @@ get_joystick_movement
 	stx player_snake_direction  ;X is the direction: 1 up, 2 down, 3 right, 4 left
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 read_joystick
 
@@ -403,12 +438,12 @@ read_joystick
 	and #%10000000  ;isolate joystick-right direction (bit 7)
 	asl  ;move bit 7 to carry
 	rol  ;move carry to bit 0
-	sta $12  ;put right bit in working variable
+	sta temp1  ;put right bit in working variable
 	lda _VIA_JOYSTICK_MIRROR
 	eor #255
 	and #%00111100  ;isolate joystick directions and fire
 	lsr  ;shift right
-	ora $12  ;add right direction, bits are not fire (16 if on), left (8 if on), down (4 if on), up (2 if on) and right (1 if on)
+	ora temp1  ;add right direction, bits are not fire (16 if on), left (8 if on), down (4 if on), up (2 if on) and right (1 if on)
 	beq .read_joy_set_carry_exit
 
     ; get a single joystick direction / fire from priority table (in case more than one at the same time e.g. up-left)
@@ -426,7 +461,7 @@ read_joystick
 	clc
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 set_screen_base_colours
 
@@ -448,41 +483,51 @@ set_screen_base_colours
 	bne .set_top_base_colour_loop
 	rts
 
-;-----------------------------------------------------------------------------------
-;TODO: where is $0200+ data used?
-initialise_0200_onwards_with_increments_of_11
+;--------------------------------------------------------------------------------------------------
+; Populate the video matrix location _BITMAP_GRID ($200) with sequential index numbers, necessary
+; for the VIC pseudo bitmap configuration to work.
+; The index values from $0200 to $02f1 (242 entries) are:
+;     1st iteration:  0, 11, 22, 33, 44 ... 231
+;     2nd iteration:  1, 12, 23, 34, 45 ... 232
+;     3rd iteration:  2, 13, 24, 35, 46 ... 233 onwards ...
+;   final iteration: 10, 21, 32, 43, 54 ... 241
+; This array only needs to be set-up once and the index values do not change.
+; Despite being called twice in this program, only the first call is actually necessary.
 
-    ; set $0200 to $02f2 (242 entries) with 0, 11, 22, 33, 44 etc
+initialise_bitmap_grid_index
+
 	lda #0
 	tay
-	sta $12
-.init_0200_11_times_outer_loop
+	sta temp1
+.init_bitmap_grid_index_loop
 
+    ; starting with the value in temp1 (0, 1, 2 etc) populate the bitmap grid with values 11 apart
 	ldx #22
-.init_0200_22_times_loop
-	sta $0200,y
+.set_index_values_11_apart_loop
+	sta _BITMAP_GRID,y
+
 	iny
 	clc
 	adc #11
 	dex
-	bne .init_0200_22_times_loop
+	bne .set_index_values_11_apart_loop
 
-	inc $12
-	lda $12
+	inc temp1
+	lda temp1
 	cmp #11  ;11 times (starts at 0)
-	bcc .init_0200_11_times_outer_loop
+	bcc .init_bitmap_grid_index_loop
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 clear_screen_and_add_heading_block
 
-	lda #>_SCREEN_ADDR
-	ldy #<_SCREEN_ADDR
+	lda #>_BITMAP_CANVAS
+	ldy #<_BITMAP_CANVAS
 	sta bitmap_screen_address_high
 	sty bitmap_screen_address_low
 
-	ldx #16  ;16 pixels high by 8 pixels wide, also see _VIC_CR3
+	ldx #16  ;2 rows x 8-pixel space character
 	ldy #0
 	tya  ;clear the entire character (blank space)
 .clear_one_character_loop
@@ -493,21 +538,21 @@ clear_screen_and_add_heading_block
 	dex
 	bne .clear_one_character_loop
 
-    ;-------------------------------------------------------------------------------
+    ;----------------------------------------------------------------------------------------------
     ; draw blocked out characters in the top two lines
 draw_blocked_out_heading_lines
 
-	lda #>_SCREEN_ADDR
-	ldy #<_SCREEN_ADDR
+	lda #>_BITMAP_CANVAS
+	ldy #<_BITMAP_CANVAS
 	sta bitmap_screen_address_high
 	sty bitmap_screen_address_low
 
 	ldx #22  ;22 characters
 .plot_block_characters_loop
 
-    ; draw a single 16 x 8 block space character
-	lda #255  ;fill the entire character line
-	ldy #15  ;16 pixels high by 8 pixels wide, also see _VIC_CR3
+    ; draw one heading column (2 rows x 8-pixel block-space character)
+	lda #255  ;fill the entire character byte
+	ldy #15
 .plot_one_block_character_loop
 	sta (bitmap_screen_address_low),y
 	dey
@@ -515,7 +560,7 @@ draw_blocked_out_heading_lines
 
 	lda bitmap_screen_address_low
 	clc
-	adc #column_spacing  ;each column is 11 rows x 16 pixels (high) apart
+	adc #column_spacing
 	sta bitmap_screen_address_low
 	bcc *+4  ;skip high byte update
 	inc bitmap_screen_address_high
@@ -523,9 +568,9 @@ draw_blocked_out_heading_lines
 	bne .plot_block_characters_loop
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; Base low/high bytes for each 8-pixel column on the bitmap screen
-; each column is 176 pixels apart (11 rows x 16 pixels high), see _VIC_CR3
+; each column is 176 pixels apart (11 rows x 16-pixels tall), see _VIC_CR3
 
 data_bitmap_column_base_low
 	!byte $00, $b0, $60, $10, $c0, $70, $20, $d0
@@ -537,7 +582,7 @@ data_bitmap_column_base_high
 	!byte $15, $16, $16, $17, $18, $18, $19, $1a
 	!byte $1b, $1b, $1c, $1d, $1d, $1e
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; Compute the 8x8 bitmap screen address for the sprite at screen_column/screen_row.
 ; screen_column selects the 8-pixel-wide column using a table lookup.
 ; screen_row is added as the vertical byte offset from that column base.
@@ -564,7 +609,7 @@ compute_bitmap_screen_address_from_screen_row_column
 
     ; Use X to find the column base address value (for the top of column) considering
     ; that a column value is 0 to 21 for the 22 columns on the screen (each spanning 8 pixels) and 
-    ; each column is 176 pixels apart (11 rows x 16 pixels high), see _VIC_CR3
+    ; each column is 176 pixels apart (11 rows x 16-pixels tall), see _VIC_CR3
     ; e.g. column 17 (in X) is at bitmap position 17 x 176 (176 row pixels vertically until the next column)
     ; giving 2992 ($bb0) added to the VIC screen address location ($1000) is $1bb0
 	lda data_bitmap_column_base_high,x
@@ -579,7 +624,7 @@ compute_bitmap_screen_address_from_screen_row_column
 	inc bitmap_screen_address_high
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; Bit blitter for an 8-byte sprite / bitmap
 ; Plots the given object on the screen by adding to the bits already present there
 plot_bitmap_on_screen
@@ -611,7 +656,7 @@ plot_bitmap_on_screen
     ; calculate the next screen address using pixel counter in Y
 	tya
 	tax  ;store Y in X for loop later on
-	ora #column_spacing  ;each column is 11 rows x 16 pixels (high) apart
+	ora #column_spacing
 	tay
 
     ; plot the spill byte in the next screen address
@@ -627,7 +672,7 @@ plot_bitmap_on_screen
 	bpl .plot_bitmap_pixels_loop
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; Bitmask-based eraser for an 8-byte sprite / bitmap
 ; Unplots the given object bits on the screen, thereby clearing it
 erase_bitmap_on_screen
@@ -661,7 +706,7 @@ erase_bitmap_on_screen
     ; calculate the next screen address using pixel counter in Y
 	tya
 	tax
-	ora #column_spacing  ;each column is 11 rows x 16 pixels (high) apart
+	ora #column_spacing
 	tay
 
     ; unplot the spill byte in the next screen address
@@ -678,11 +723,11 @@ erase_bitmap_on_screen
 	bpl .clear_bitmap_pixels_loop
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 get_screen_coordinates_for_sprite
 
-	ldy $06  ;points to player or enemy snake
+	ldy temp_snake_data_pointer2
 get_screen_coordinates_for_sprite_player  ;Y is 7 when called
 	ldx #2
 .get_sprite_screen_coords_loop
@@ -693,11 +738,11 @@ get_screen_coordinates_for_sprite_player  ;Y is 7 when called
 	bpl .get_sprite_screen_coords_loop
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 set_screen_coordinates_for_sprite
 
-	ldy $06  ;points to player or enemy snake
+	ldy temp_snake_data_pointer2
 	ldx #2
 .set_sprite_screen_coords_loop
     lda screen_coords_table,x  ;get $0f (screen_row), $0e (screen_column), $0d (segment_direction)
@@ -707,18 +752,18 @@ set_screen_coordinates_for_sprite
 	bpl .set_sprite_screen_coords_loop
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 data_screen_column_increments
 	!byte 0, 0, 2, 254
 data_screen_row_increments
 	!byte 254, 2, 0, 0
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 check_and_update_screen_row_column
 
-	ldx segment_direction
+	ldx current_segment_direction
 	bne check_if_movement_direction_is_within_screen_bounds
 	ldx screen_column
 	ldy screen_row
@@ -763,7 +808,7 @@ check_if_movement_direction_is_within_screen_bounds
 .row_ok_on_bottom_edge
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 update_screen_row_column
 
@@ -772,7 +817,7 @@ update_screen_row_column
 	sty screen_row
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 check_snake_head_maze_cell_alignment
 
@@ -786,7 +831,7 @@ check_snake_head_maze_cell_alignment
 	lda screen_coords_table+1,x  ;points to $0e (snake head screen column), $0f (snake head screen row)
 	sec
 	sbc #6  ;6 is the offset from the screen edge / maze origin, carry will clear if row / column is 5 or less
-	and #%00001111  ;15 for the 16 pixel maze-cell size
+	and #%00001111  ;15 for the 16-pixel maze-cell size
 	bne .end_if_not_zero
 	dex
 	bpl .check_row_then_column_loop
@@ -799,7 +844,7 @@ check_snake_head_maze_cell_alignment
     ; carry is set if either row or column coordinates are greater than 5, or both row or column are zero
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 check_if_screen_coords_are_on_8_pixel_boundary
 
@@ -823,12 +868,12 @@ check_if_screen_coords_are_on_8_pixel_boundary
 .end_check_coords_on_8_pixel_boundary
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 data_to_add_to_maze_index
 	!byte 0, 11, 1, 0
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 check_segment_direction_is_valid
 	bit maze_cell_boundary_flag
@@ -838,7 +883,7 @@ check_segment_direction_is_valid
 	rts
 
 .check_segment_movement_is_valid_in_maze_and_current_cell
-    ldx segment_direction
+    ldx current_segment_direction
 
 check_movement_is_valid_in_maze_and_current_cell
     stx snake_direction_pointer_to_test
@@ -851,12 +896,12 @@ check_movement_is_valid_in_maze_and_current_cell
 
 .check_if_movement_direction_is_allowed_in_maze_cell
     ; determine maze index to check if direction is allowed for the current maze cell
-    jsr convert_screen_row_column_to_byte_in_maze_index
+    jsr convert_screen_row_column_to_maze_index
 	ldx snake_direction_pointer_to_test
 	clc
-	adc data_to_add_to_maze_index-1,x  ;from X = 0, 11, 1 or 0
-	sta maze_index
-	jsr get_maze_cell_type  ;A is 0, 1, 2 or 3
+	adc data_to_add_to_maze_index-1,x  ;with X, gets 0, 11, 1 or 0
+	sta maze_index  ;calculated
+	jsr get_maze_part_from_maze_data  ;A is 0, 1, 2 or 3
 
     ; check A:
     ;   0 = open cell, any direction is allowed
@@ -879,18 +924,18 @@ check_movement_is_valid_in_maze_and_current_cell
 	bcs .direction_not_allowed_for_maze_cell
 	bcc .direction_allowed_for_maze_cell  ;always branch
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 check_if_direction_change_is_valid
 
-    ldx snake_direction
+    ldx desired_snake_direction
 	bit maze_cell_boundary_flag
 	bpl check_movement_is_valid_in_maze_and_current_cell
 	jsr check_if_screen_coords_are_on_8_pixel_boundary
 	bne .direction_not_valid  ;not on 8 pixel boundary
 
-	ldx snake_direction
-	lda segment_direction
+	ldx desired_snake_direction
+	lda current_segment_direction
 	cmp data_directions-1,x
 	bne .direction_not_valid
 	lda screen_column
@@ -903,7 +948,7 @@ check_if_direction_change_is_valid
     sec
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 move_body_segment_on_screen
 
@@ -912,24 +957,24 @@ move_body_segment_on_screen
 	jsr prepare_snake_body_sprite_to_use
 
 update_row_column_and_plot_bitmap_on_screen
-    lda direction_change_indicator
-	beq .skip_direction_change_indicator_update  ;direction change indicator still zero?
-	ldy segment_direction
-	sta segment_direction
-	sty direction_change_indicator
-.skip_direction_change_indicator_update
+    lda pending_direction_change
+	beq .skip_pending_direction_change_update  ;direction change indicator still zero?
+	ldy current_segment_direction
+	sta current_segment_direction
+	sty pending_direction_change
+.skip_pending_direction_change_update
     jsr update_screen_row_column
 	jsr plot_bitmap_on_screen
 	jsr set_screen_coordinates_for_sprite
 
 add_3_to_point_to_next_segment
-    lda $06
+    lda temp_snake_data_pointer2
 	clc
 	adc #3
-	sta $06
+	sta temp_snake_data_pointer2
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; snake head and body sprite addresses
 
 data_body_sprite_addresses_low
@@ -960,14 +1005,14 @@ data_head_sprite_addresses_high
 	!fill 7, >player_snake_head_up_sprite
 	!fill 5, >enemy_snake_head_left_sprite
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 data_directions_right_up
 	!byte DIRECTION_RIGHT, DIRECTION_RIGHT, DIRECTION_UP, DIRECTION_UP
 data_directions_left_down
 	!byte DIRECTION_LEFT, DIRECTION_LEFT, DIRECTION_DOWN, DIRECTION_DOWN
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 prepare_snake_body_sprite_to_use
 
@@ -978,7 +1023,7 @@ prepare_snake_body_sprite_to_use
 	sta pixel_data_high
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 set_snake_head_sprite_to_use_from_direction
 
@@ -986,7 +1031,7 @@ set_snake_head_sprite_to_use_from_direction
     lda snake_colour  ;is 0 for player snake, 1 or 2 for enemy
 	asl
 	asl  ;asl x 2 = multiply by 4
-	adc segment_direction
+	adc current_segment_direction
 	tax
 
 	lda data_head_sprite_addresses_low-1,x
@@ -995,25 +1040,27 @@ set_snake_head_sprite_to_use_from_direction
 	sta pixel_data_high
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 handle_player_movement
 
     ldy #0
-	dec $1b
+	dec player_snake_speed_counter
+    ; skip movement action when speed counter is zero
+    ; the lower the reload value, the more movement skips occur and the snake is slower
 	bne perform_player_or_enemy_snake_movement
-	lda $1a
-	sta $1b
+	lda player_snake_speed_reload
+	sta player_snake_speed_counter  ;reset back to the control value
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 perform_player_or_enemy_snake_movement
 
-    sty $06  ;value in snake_data_pointer or #0 (player)
-	sty $05  ;as above
+    sty temp_snake_data_pointer2  ;value in snake_data_pointer or #0 (player)
+	sty temp_snake_data_pointer1
 
 	ldx #0
-	stx direction_change_indicator
+	stx pending_direction_change
 .set_snake_main_variables_loop
     lda player_and_enemy_table_word,y  ;player_and_enemy_table with offset for sprite in Y
 	sta body_segments,x  ;update $0b (snake active indicator), $0a (snake_in_home_or_maze), $09 (snake_direction), $08 (snake_colour), $07 (body_segments)
@@ -1024,19 +1071,19 @@ perform_player_or_enemy_snake_movement
 
 	iny
 	iny
-	sty $06  ;points to player or enemy snake head (Y is 7 or enemy snake pointer + 7)
+	sty temp_snake_data_pointer2  ;points to player or enemy snake head (Y is 7 or enemy snake pointer + 7)
 	jsr get_screen_coordinates_for_sprite
 	jsr check_snake_head_maze_cell_alignment  ;decide if snake head is at a position to check movement rules
-	jsr continue_apply_direction_for_enemy_snake
+	jsr choose_enemy_snake_direction
 	jsr check_if_screen_coords_are_on_8_pixel_boundary
 	bne .coords_not_on_8_pixel_boundary  ;no direction change
 
     ; consider a direction change
-	lda segment_direction
-	sta direction_change_indicator
+	lda current_segment_direction
+	sta pending_direction_change
 
 .coords_not_on_8_pixel_boundary
-    lda snake_direction
+    lda desired_snake_direction
 	beq .no_snake_direction_change
 	jsr check_if_direction_change_is_valid
 	bcc .move_in_the_direction  ;direction change is allowed
@@ -1045,7 +1092,7 @@ perform_player_or_enemy_snake_movement
 	bcc .plot_snake_head_for_direction
 	ldy snake_in_home_or_maze
 	bpl .apply_direction_for_enemy_snake
-	ldx $05  ;player or enemy snake data table pointer
+	ldx temp_snake_data_pointer1
 	lda #0
 	sta player_and_enemy_table+3,x  ;update snake in home or maze to #0 (left home, in maze)
 	cpy #128
@@ -1054,29 +1101,29 @@ perform_player_or_enemy_snake_movement
 
 .apply_direction_for_enemy_snake
     lda snake_colour  ;is 0 for player snake, 1 or 2 for enemy
-	bne .continue_apply_direction_for_enemy_snake
+	bne .choose_enemy_snake_direction
 	jmp plot_entire_snake_on_screen_with_prepared_coordinates
 
-.continue_apply_direction_for_enemy_snake
+.choose_enemy_snake_direction
     lsr $9114  ;set carry flag from timer
 	bcs .carry_is_set_from_timer
 .find_valid_snake_direction_loop
-    ldy segment_direction
+    ldy current_segment_direction
 	lda data_directions_right_up-1,y
-	sta snake_direction  ;right or up
+	sta desired_snake_direction  ;right or up
 	jsr check_if_direction_change_is_valid
 	bcc .move_in_the_direction  ;direction change is allowed
 .carry_is_set_from_timer
-    ldy segment_direction
+    ldy current_segment_direction
 	lda data_directions_left_down-1,y
-	sta snake_direction  ;left or down
+	sta desired_snake_direction  ;left or down
 	jsr check_if_direction_change_is_valid
 	bcs .find_valid_snake_direction_loop  ;direction change is allowed
 
 .move_in_the_direction
-    lda snake_direction
-	sta direction_change_indicator
-	ldx $05  ;player or enemy snake data table pointer
+    lda desired_snake_direction
+	sta pending_direction_change
+	ldx temp_snake_data_pointer1
 	lda #0
 	sta player_and_enemy_table+2,x  ;snake direction
 .plot_snake_head_for_direction
@@ -1088,7 +1135,7 @@ perform_player_or_enemy_snake_movement
     jsr move_body_segment_on_screen
 	dec body_segments
 	bne .move_body_segment_loop
-	ldx $05  ;player or enemy snake data table pointer
+	ldx temp_snake_data_pointer1
 	lda #8
 	sec
 	sbc player_and_enemy_table,x
@@ -1119,13 +1166,13 @@ perform_player_or_enemy_snake_movement
 
 .mark_snake_as_left_home_and_active
     lda #0
-	ldx $05  ;player or enemy snake data table pointer
+	ldx temp_snake_data_pointer1
 	sta player_and_enemy_table+4,x  ;snake active indicator
 	sec  ;to set the door closed
 .end_perform_movement
     rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; snake head and body sprites
 
 player_snake_body_sprite
@@ -1280,7 +1327,7 @@ enemy_weak_snake_head_left_sprite
     !byte %00111001
     !byte %00111001
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 initialise_system_registers
 
@@ -1298,7 +1345,7 @@ initialise_system_registers
 	sta (bitmap_screen_address_low),y
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 data_maze_1
 	!byte $d5, $55, $56, $44, $a4, $49, $4a, $a5
@@ -1420,7 +1467,7 @@ data_maze_20
     !byte $4e, $4c, $64, $2a, $ca, $6b, $a8, $44
     !byte $0a, $94, $44, $c0
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 data_maze_addresses_low
 	!byte <data_maze_1
@@ -1449,16 +1496,17 @@ data_maze_addresses_high
     !fill 9, 1+>data_maze_1
     !fill 4, 2+>data_maze_1
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
+; Use the maze level (the current maze to be played), lookup the maze layout and display it
 
-draw_maze
+draw_maze_on_screen
 
-    ldx current_maze
+    ldx maze_level
 	cpx #21  ;beyond max number of mazes available
 	bcc .set_maze_build_from_address
 
-    ; current maze number can exceed the 20 defined maze maps,
-    ; so subtract 10 from current maze number to get one of the 20 maze maps
+    ; current maze level can exceed the 20 defined maze maps,
+    ; so subtract 10 from current maze level to get one of the 20 maze maps
 	txa
 .decide_maze_to_use
     sbc #10
@@ -1471,74 +1519,73 @@ draw_maze
 	lda data_maze_addresses_high-1,x
 	sta maze_address_high
 
+    ;----------------------------------------------------------------------------------------------
     ; draw the maze (which leaves unwanted maze parts on the top row and left column of the maze)
 	lda #0
-	sta maze_index
+	sta maze_index  ;is 0
 .draw_maze_loop_1
-    jsr convert_byte_in_maze_index_to_screen_row_column
-	jsr get_maze_cell_type  ;A is 0, 1, 2 or 3
+    jsr convert_maze_index_to_screen_row_column
+
+    ; get the maze part to draw
+    jsr get_maze_part_from_maze_data  ;A is 0, 1, 2 or 3 (WALL_xxx)
 	tax
-	cpx #3
-	bcc .skip_draw_maze_part
-	dex  ;X is 2
+	cpx #WALL_VERTICAL_AND_HORIZONTAL
+	bcc .skip_plot_double_wall_section
 
-    ; draw maze parts:
-    ;   "vertical wall section with green spare on top"
-    ;   "vertical wall section"
-    ; and at a different screen or column coordinate:
-    ;   "any green square on the left a wall"
-    ;   "horizontal wall section"
-	jsr data_maze_part_for_X_index
-	jsr convert_byte_in_maze_index_to_screen_row_column
-	ldx #1
-.skip_draw_maze_part
+	dex  ;draw vertical section first
+	jsr plot_maze_parts_on_screen
+	jsr convert_maze_index_to_screen_row_column
+	ldx #WALL_HORIZONTAL
 
-    ; draw maze parts for X = 0, 1, 2
-    jsr data_maze_part_for_X_index
+.skip_plot_double_wall_section
+    ; draw maze parts for X = 0, 1, 2 (WALL_xxx)
+    jsr plot_maze_parts_on_screen
 	inc maze_index
 	lda maze_index
 	cmp #110  ;10 rows x 11 columns of parts needed to plot maze throughout the screen
 	bcc .draw_maze_loop_1
 
+    ;----------------------------------------------------------------------------------------------
     ; tidy top line of maze (loops 2 and 3)
 	lda #10
-	sta maze_index
-	lda #<data_maze_part_1  ;"any green square on the left a wall"
+	sta maze_index  ;is 10
+	lda #<data_maze_part_1  ;"horizontal wall section with green square on left"
 	sta pixel_data_low
-	lda #>data_maze_part_1  ;"any green square on the left a wall"
+	lda #>data_maze_part_1  ;"horizontal wall section with green square on left"
 	sta pixel_data_high
 .draw_maze_loop_2
-    jsr convert_byte_in_maze_index_to_screen_row_column
+    jsr convert_maze_index_to_screen_row_column
 	jsr erase_bitmap_on_screen
 	dec maze_index
 	bpl .draw_maze_loop_2
 
 	lda #10
-	sta maze_index
+	sta maze_index  ;is 10
 	lda #<data_maze_part_2  ;"horizontal wall section"
 	sta pixel_data_low
 	lda #>data_maze_part_2  ;"horizontal wall section"
 	sta pixel_data_high
 .draw_maze_loop_3
-    jsr convert_byte_in_maze_index_to_screen_row_column
+    jsr convert_maze_index_to_screen_row_column
 	jsr plot_bitmap_on_screen
 	dec maze_index
 	bpl .draw_maze_loop_3
 
+    ;----------------------------------------------------------------------------------------------
     ; tidy left column of maze (loops 4 and 5)
 	lda #99
-	sta maze_index
+	sta maze_index  ;is 99
 	lda #<data_maze_part_3  ;"vertical wall section with green spare on top"
 	sta pixel_data_low
 	lda #>data_maze_part_3  ;"vertical wall section with green spare on top"
 	sta pixel_data_high
 .draw_maze_loop_4
-    jsr convert_byte_in_maze_index_to_screen_row_column
+    jsr convert_maze_index_to_screen_row_column
 	jsr erase_bitmap_on_screen
 	lda maze_index
 	sec
 	sbc #11
-	sta maze_index
+	sta maze_index  ;calculated
 	bne .draw_maze_loop_4
 
 	lda #<data_maze_part_4  ;"vertical wall section"
@@ -1546,22 +1593,22 @@ draw_maze
 	lda #>data_maze_part_4  ;"vertical wall section"
 	sta pixel_data_high
 	lda #99
-	sta maze_index
+	sta maze_index  ;is 99
 .draw_maze_loop_5
-    jsr convert_byte_in_maze_index_to_screen_row_column
+    jsr convert_maze_index_to_screen_row_column
 	jsr plot_bitmap_on_screen
 	lda maze_index
 	sec
 	sbc #11
-	sta maze_index
+	sta maze_index  ;calculated
 	bne .draw_maze_loop_5
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; maze part data
 
 data_maze_part_0
-    ;any green square on the right or bottom of a wall
+    ;single green square
     !byte %10100000
     !byte %10100000
     !byte %10100000
@@ -1572,7 +1619,7 @@ data_maze_part_0
     !byte %00000000
 
 data_maze_part_1
-    ;any green square on the left a wall
+    ;horizontal wall section with green square on left
     !byte %10100101
     !byte %10100101
     !byte %10100101
@@ -1615,20 +1662,20 @@ data_maze_part_4
     !byte %01010000
     !byte %01010000
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; maze part addresses
 
 data_maze_parts_low
-    !byte <data_maze_part_0  ;any green square on the right or bottom of a wall
-	!byte <data_maze_part_1  ;any green square on the left a wall
+    !byte <data_maze_part_0  ;single green square
+	!byte <data_maze_part_1  ;horizontal wall section with green square on left
 	!byte <data_maze_part_3  ;vertical wall section with green spare on top
 
 data_maze_parts_high
-    !byte >data_maze_part_0  ;any green square on the right or bottom of a wall
-	!byte >data_maze_part_1  ;any green square on the left a wall
+    !byte >data_maze_part_0  ;single green square
+	!byte >data_maze_part_1  ;horizontal wall section with green square on left
     !byte >data_maze_part_3  ;vertical wall section with green spare on top
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 data_draw_maze_part_horizontal_offset
 	!byte $08, $00
@@ -1636,9 +1683,9 @@ data_draw_maze_part_horizontal_offset
 data_draw_maze_part_vertical_offset
 	!byte $00, $08
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
-data_maze_part_for_X_index
+plot_maze_parts_on_screen
 
     ; plot maze part on screen for the X value (0, 1, 2)
     stx maze_part_to_plot
@@ -1649,14 +1696,14 @@ data_maze_part_for_X_index
 	jsr plot_bitmap_on_screen
 
 	ldx maze_part_to_plot  ;0, 1, 2
-	beq .end_data_maze_part  ;skip plot of additional maze part when X is 0
-    ; this skips when maze part above was "any green square on the right or bottom of a wall"
+	beq .end_data_maze_part  ;skip plot of second section of maze part when X is 0
+    ; this skips when maze part above was "single green square" (WALL_SINGLE_GREEN_SQUARE)
 
-    ; whenever the maze parts (below) are plotted, also plot the maze part after it
-    ;   "any green square on the left a wall"
-    ;     then plot "horizontal wall section"
-	;   "vertical wall section with green spare on top"
-    ;     then plot "vertical wall section"
+    ; whenever the maze parts (below) are plotted, complete it with the second section
+    ;   horizontal wall is: "horizontal wall section with green square on left"
+    ;                   and "horizontal wall section"
+    ;     vertical wall is: "vertical wall section with green spare on top"
+    ;                   and "vertical wall section"
 
     ; update screen coordinates for the next maze part using the offset table to add to screen column and row
 	lda screen_column
@@ -1679,43 +1726,44 @@ data_maze_part_for_X_index
 .end_data_maze_part
     rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
-convert_byte_in_maze_index_to_screen_row_column
+convert_maze_index_to_screen_row_column
 
     lda maze_index
 	ldx #0
 	sec
-.subtract_11_loop  ;divide A by 11 columns in a row
-    inx
+.subtract_11_loop  ;divide A by 11 rows in a column
+    inx  ;count rows
 	sbc #11
 	bcs .subtract_11_loop
 
+    ; remainder in A is the column number, convert to bitmap position
 	adc #11
 	asl
 	asl
 	asl
-	asl  ;asl x 4 = multiply by 16 (16 pixel character size)
+	asl  ;asl x 4 = multiply by 16 (columns are 2 8-bit characters apart)
 	sta screen_column
 
 	txa  ;X is from the division above
 	asl
 	asl
 	asl
-	asl  ;asl x 4 = multiply by 16 (16 pixel character size)
+	asl  ;asl x 4 = multiply by 16 (16-pixel tall characters)
 	sta screen_row
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
-convert_screen_row_column_to_byte_in_maze_index
+convert_screen_row_column_to_maze_index
 
     ; convert row component
     lda screen_row
 	lsr
 	lsr
 	lsr
-	lsr  ;lsr x 4 to divide screen_row by 16 (16 pixel character size) for a cell-row index
+	lsr  ;lsr x 4 to divide screen_row by 16 (16-pixel tall characters) for a cell-row index
 	sec
 	sbc #1  ;amend cell-row index to be row-1
 	sta maze_index  ;update maze index
@@ -1731,39 +1779,52 @@ convert_screen_row_column_to_byte_in_maze_index
 	lsr
 	lsr
 	lsr
-	lsr  ;lsr x 4 to divide screen_column by 16 (16 pixel character size) for a cell-column index
+	lsr  ;lsr x 4 to divide screen_column by 16 (columns are 2 8-bit characters apart) for a cell-column index
 
 	clc
 	adc maze_index  ;add the row component
-	sta maze_index  ;result is 13 * (screen_row/16 - 1) + (screen_column/16), where 16 is the 16 pixel character size
+	sta maze_index  ;result is 13 * (screen_row/16 - 1) + (screen_column/16)
 	rts
 
-;-----------------------------------------------------------------------------------
-; Called from draw_maze, this function decides which maze graphic piece to draw
+;--------------------------------------------------------------------------------------------------
+; Called from draw_maze_on_screen, this function decides which maze graphic piece to draw
 
-get_maze_cell_type
+get_maze_part_from_maze_data
 
-    ; convert maze index address value to X and Y
+    ; convert maze index address value to X for division loop below
     lda maze_index
 	and #%00000011  ;3
 	tax  ;X is 0, 1, 2 or 3
+
+    ; convert maze index address value to Y for maze data offset
 	lda maze_index
 	lsr
 	lsr  ;divide maze index address value by 4 (2 x lsr)
 	tay  ;Y is 0 to 27
+
+    ; get maze part byte from table (the same byte is read 4 times)
+    ; each maze part byte holds 4 maze parts (2 bits each)
+    ; for example $1e (00011110) is:
+    ;   00 = WALL_SINGLE_GREEN_SQUARE
+    ;   01 = WALL_HORIZONTAL
+    ;   11 = WALL_VERTICAL_AND_HORIZONTAL
+    ;   10 = WALL_VERTICAL
 	lda (maze_address_low),y
+
+    ; the X value behaves like a sub-index to get the maze part (2 bits) to use
 .decide_maze_part_loop
     cpx #3
 	bcs .end_decide_maze_part  ;branch if X is 3
 	lsr
-	lsr  ;divide maze byte value by 4 (2 x lsr)
+	lsr  ;isolate the two maze part bits to use by shifting to the right twice (with AND below)
 	inx
 	bne .decide_maze_part_loop  ;always branch
+
 .end_decide_maze_part
-    and #%00000011  ;3, so A is 0, 1, 2 or 3
+    and #%00000011  ;3, so A is 0, 1, 2 or 3 (WALL_xxx)
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 data_for_snake_entrance_door
     !byte %01010101
@@ -1775,7 +1836,7 @@ data_for_snake_entrance_door
     !byte %00000000
     !byte %00000000
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 plot_player_snake_and_open_entrance_door
 
@@ -1787,7 +1848,7 @@ plot_player_snake_and_open_entrance_door
 	jsr plot_entire_snake_on_screen
 	clc
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 open_or_close_snake_entrance_door
 
@@ -1806,11 +1867,11 @@ open_or_close_snake_entrance_door_with_X_Y_coordinates
 .goto_plot_bitmap_on_screen_1
     jmp plot_bitmap_on_screen
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 plot_entire_snake_on_screen
 
-    sta $06  ;points to player or enemy snake head
+    sta temp_snake_data_pointer2  ;points to player or enemy snake head
 	jsr get_screen_coordinates_for_sprite
 plot_entire_snake_on_screen_with_prepared_coordinates
     jsr set_snake_head_sprite_to_use_from_direction
@@ -1826,7 +1887,7 @@ plot_entire_snake_on_screen_with_prepared_coordinates
 	bne .plot_snake_body_loop
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; Given the starting screen coordinates and start of text data address, plot the
 ; text in the top heading lines on the screen
 
@@ -1872,7 +1933,7 @@ plot_heading_on_screen
 .end_plot_heading
     rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 plot_block_at_screen_coordinates
 
@@ -1884,7 +1945,7 @@ plot_block_at_screen_coordinates
 	sta pixel_data_high
 	jmp plot_bitmap_on_screen
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 clear_block_at_screen_coordinates
 
@@ -1896,7 +1957,7 @@ clear_block_at_screen_coordinates
 	sta pixel_data_high
 	jmp erase_bitmap_on_screen
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 plot_A_on_screen
 
@@ -1914,7 +1975,7 @@ plot_A_on_screen
 	sta pixel_data_low
 	lda #129  ;$81
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 reverse_plot_pixel_data_and_increment_screen_coords
 
@@ -1930,7 +1991,7 @@ reverse_plot_pixel_data_and_increment_screen_coords
 	sta screen_column
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 data_score_heading
 	!pet "score"
@@ -1947,7 +2008,7 @@ data_level_heading
 	!pet "serpents"
 	!byte $00
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 plot_level_and_headings_on_screen
 
@@ -1971,7 +2032,7 @@ plot_level_and_headings_on_screen
 	sta screen_column
 	lda #8
 	sta screen_row
-	lda current_maze
+	lda maze_level
 	cmp #10
 	bcc .plot_last_level_digit
 	ldx #255
@@ -1987,7 +2048,7 @@ plot_level_and_headings_on_screen
 .plot_last_level_digit
 	jmp plot_A_on_screen
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; Initialise player and high score
 
 zero_player_and_high_score
@@ -2001,7 +2062,7 @@ zero_player_score
 	bpl .zero_player_score_loop
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 update_player_score_low_amount
 
@@ -2032,7 +2093,7 @@ update_player_score
     cld  ;clear decimal
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 plot_player_score_on_screen
 
@@ -2092,7 +2153,7 @@ plot_score_on_screen
 	bne .plot_each_score_digit_loop
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 plot_high_score_on_screen
 
@@ -2101,7 +2162,7 @@ plot_high_score_on_screen
 	ldy #128
 	jmp plot_score_on_screen
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 check_for_new_high_score
 
@@ -2126,7 +2187,7 @@ check_for_new_high_score
 .subroutine_return
     rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 add_one_to_player_lives
 
@@ -2157,7 +2218,7 @@ update_player_loses_life
 .skip_lose_life_clear_carry
     rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 play_sounds
 
@@ -2207,7 +2268,7 @@ play_sounds
 	bne .play_sounds_loop
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 prepare_sound_data
 
@@ -2256,7 +2317,7 @@ prepare_sound_data
 .end_of_sound_data_byte_reached
     rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 data_clear_all_sound_channels
     !byte SOUND_BASS, <data_sound_end, >data_sound_end
@@ -2266,7 +2327,7 @@ data_clear_all_sound_channels
 data_sound_end
     !byte $ff
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 clear_all_sound_channels
 
@@ -2278,11 +2339,11 @@ clear_all_sound_channels
 	jsr prepare_sound_data
 	jmp play_sounds
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 set_enemy_snake_start_position
 
-    lda current_maze
+    lda maze_level
 	cmp #1  ;first maze
 	bne .not_maze_number_one
 	lda #5  ;head plus 4 body parts, easier for the first maze, changes to 6 for the others
@@ -2311,39 +2372,38 @@ perform_snake_entrance
 	clc  ;to clear space and open door
     jmp open_or_close_snake_entrance_door_with_X_Y_coordinates   ;door open
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 data_directions
 	!byte DIRECTION_DOWN, DIRECTION_UP, DIRECTION_LEFT, DIRECTION_RIGHT
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 data_random_state_comparison_values
 	!byte 50, 80, 110, 140, 170, 190, 210, 225, 240, 250
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 handle_enemy_snake_movement
 
     dec enemy_snake_speed_counter
+    ; skip movement action when speed counter is zero
+    ; the higher the reload value, fewer movement skips occur and the snake is faster
 	bne perform_enemy_snake_movement
-
-    ; only skip enemy snake movement on speed counter of zero
-    ; so a higher enemy_snake_speed_counter means more / quicker enemy snake movement
 	lda enemy_snake_speed_reload
 	sta enemy_snake_speed_counter  ;reset back to the control value
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 perform_enemy_snake_movement
 
     lda #0
-	sta temp2
+	sta temp3
 	ldx #31  ;point to first snake table data
 .each_snake_loop
     stx snake_data_pointer
-	ldy temp2  ;0, 1, 2
+	ldy temp3  ;0, 1, 2
 	lda snake_tick_table_word,y  ;$30, $2f, $2e
 	bpl .check_if_snake_should_enter_maze
 	cmp #128
@@ -2369,7 +2429,7 @@ perform_enemy_snake_movement
     ldy snake_data_pointer
 	jsr perform_player_or_enemy_snake_movement  ;enemy snake
 .goto_next_snake
-    inc temp2
+    inc temp3
 	lda snake_data_pointer
 	clc
 	adc #30  ;offset to next snake data
@@ -2378,12 +2438,15 @@ perform_enemy_snake_movement
 	bcc .each_snake_loop
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
+; Check if the enemy snake is at a valid maze-cell boundary, and decide whether to continue
+; current direction or change it based on a random choice or advanced AI
+; The result is stored in desired_snake_direction
 
-continue_apply_direction_for_enemy_snake  ;TODO: completion needed
+choose_enemy_snake_direction
 
-    ldx snake_colour  ;is 0 for player snake, 1 or 2 for enemy
-	bne .continue_enemy_snake_direction
+    ldx snake_colour  ;0: player snake, 1: dangerous enemy snake, 2: weak enemy snake
+	bne .continue_enemy_snake_direction  ;branch for an enemy snake only
 .end_enemy_snake_direction
     rts
 
@@ -2395,80 +2458,86 @@ continue_apply_direction_for_enemy_snake  ;TODO: completion needed
 	bcc .end_enemy_snake_direction
 	jsr advance_random_state  ;pseudo-random value in A
 
-	ldy current_maze
+	ldy maze_level
 	cpy #11
-	bcc .use_current_maze_for_Y
-	ldy #10  ;limit Y if maze number is too big
-.use_current_maze_for_Y
+	bcc .use_maze_level_for_Y
+	ldy #10  ;limit Y if maze level is too big
+.use_maze_level_for_Y
+    ; increasingly as the maze level increases, perform a move advanced direction choice
+    ; by targeting the player egg when the enemy snake is weak (needs more segments to become dangerous again)
     cmp data_random_state_comparison_values-1,y
-	bcc @LABED
-@LABDA
+	bcc .perform_advanced_direction_turn
+
+.perform_random_direction_turn
     jsr advance_random_state  ;pseudo-random value in A
 	and #%00000011  ;3
 	clc
-	adc #1
-	ldy segment_direction
+	adc #1  ;direction value down, up, left, right in A
+	ldy current_segment_direction
 	cmp data_directions-1,y
 	bne *+3  ;skip next instruction
-	tya
-    sta snake_direction  ;no change (zero) or down, up, left, right
+	tya  ;keep current_segment_direction
+    sta desired_snake_direction  ;store current_segment_direction or new direction in A
 	rts
 
-@LABED
-    lda segment_direction
-	cpx #2  ;2 is weak enemy snake
+.perform_advanced_direction_turn
+    lda current_segment_direction
+	cpx #2  ;2 = weak enemy snake
 	beq .move_toward_player_egg
 	bit $77
-	bpl @LAC0B
-@LABF7
+	bpl .try_horizontal_movement
+
+.try_vertical_movement
     ldx #DIRECTION_UP
 	ldy screen_row
     cpy player_body_segments+7  ;snake head row
-	beq @LAC0B
+	beq .try_horizontal_movement
 	bcs .save_snake_direction
 	ldx #DIRECTION_DOWN
+
 .save_snake_direction
     cmp data_directions-1,x
 	beq *+4  ;skip next instruction
-	stx snake_direction  ;down, up, left, right
+	stx desired_snake_direction  ;down, up, left, right
     rts
 
-@LAC0B
+.try_horizontal_movement
     ldx #DIRECTION_LEFT
 	ldy screen_column
 	cpy player_body_segments+6  ;snake head column
-	beq @LAC19
+	beq .retry_vertical_movement_or_exit
 	bcs .save_snake_direction
 	ldx #DIRECTION_RIGHT
 	bne .save_snake_direction  ;always branch
 
-@LAC19
+.retry_vertical_movement_or_exit
     ldy screen_row
 	cpy player_body_segments+7  ;snake head row
-	bne @LABF7
+	bne .try_vertical_movement
+
 .exit_enemy_snake_direction
     rts
 
 .move_toward_player_egg
     ldx #DIRECTION_RIGHT
 	ldy player_egg_location_column
-	beq @LABDA
+	beq .perform_random_direction_turn  ;branch to random direction if there is no player egg
 	cpy screen_column
-	beq .check_egg_vertical_position  ;check 
-	bcs .save_snake_direction
-	ldx #DIRECTION_LEFT
+	beq .check_egg_vertical_position  ;same column, check vertical position
+	bcs .save_snake_direction  ;egg is on the right, turn right
+	ldx #DIRECTION_LEFT  ;otherwise turn left
 	bne .save_snake_direction  ;always branch
 
 .check_egg_vertical_position
     ldx #DIRECTION_DOWN
 	ldy player_egg_location_row
 	cpy screen_row
-	beq .exit_enemy_snake_direction  ;keep current direction
-	bcs .save_snake_direction  ;save new down direction
-	ldx #DIRECTION_UP  ;switch to up direction
+	beq .exit_enemy_snake_direction  ;same row, keep current direction
+	bcs .save_snake_direction  ;egg is below, turn down
+	ldx #DIRECTION_UP  ;otherwise turn up
 	bne .save_snake_direction  ;always branch
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ;   Pseudo-random number generator 
 ;   Used for frog placement, enemy decisions, egg/timer variation, etc.
 ;   Updates the 4-byte pseudo-random state in zero page $77..$7a
@@ -2496,7 +2565,7 @@ advance_random_state
 	ldx $7c  ; restore X
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; Initialise pseudo-random starting values
 
 initialise_pseudo_random_values
@@ -2512,7 +2581,7 @@ initialise_pseudo_random_values
 	sta $7b
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 update_snake_tick_counters
 
@@ -2529,7 +2598,7 @@ update_snake_tick_counters
 	bpl .reduce_ticks_by_1_loop
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; disintegrating snake sprites
 
 dead_snake_part_1
@@ -2592,7 +2661,7 @@ dead_snake_part_6
     !byte %00010100
     !byte %00000000
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; dead snake animation addresses
 
 dead_snake_part_address_low
@@ -2611,24 +2680,24 @@ dead_snake_part_address_high
 	!byte >dead_snake_part_5
 	!byte >dead_snake_part_6
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 dead_snake_animation
 
     ldx snake_data_pointer
-	sta temp3
+	sta temp4
 	lda player_and_enemy_table,x  ;player or enemy snake number of segments
 	sta body_segments
 	txa
 	clc
 	adc #7
-	sta $06  ;points to player or enemy snake head row
+	sta temp_snake_data_pointer2  ;points to player or enemy snake head row
 
 .dead_snake_animate_loop
     jsr get_screen_coordinates_for_sprite
 	jsr clear_block_at_screen_coordinates
 
-	lda temp3
+	lda temp4
 	and #%00000111  ;7
 	lsr
 	cmp #2
@@ -2645,17 +2714,17 @@ dead_snake_animation
 	bne .dead_snake_animate_loop
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 calculate_score_values_for_maze
 
-    lda current_maze
+    lda maze_level
 	cmp #21  ;beyond max number of mazes available
 	bcc .maze_less_than_21
 	lda #20  ; cap maze to 20 for calculating score values
 .maze_less_than_21
     pha
-	lsr  ;divide maze number (level) by two
+	lsr  ;divide maze level by two
 	tax  ;becomes X
 	tay  ;and Y
 
@@ -2664,7 +2733,7 @@ calculate_score_values_for_maze
 	sed  ;set to decimal
 	clc
 .increase_eat_snake_head_score_loop
-    adc #2  ;represents increment of 200 points varied by maze number divided by two
+    adc #2  ;represents increment of 200 points varied by maze level divided by two
 	dex
 	bpl .increase_eat_snake_head_score_loop
 	sta score_for_eat_snake_head
@@ -2673,12 +2742,12 @@ calculate_score_values_for_maze
 	clc
 	lda #0
 .increase_eat_snake_body_score_loop
-    adc #1  ;represents increment of 100 points varied by maze number divided by two
+    adc #1  ;represents increment of 100 points varied by maze level divided by two
 	dey
 	bpl .increase_eat_snake_body_score_loop
 	sta score_for_eat_snake_body
 
-	pla  ;get maze number (level) again
+	pla  ;get maze level again
 	tax
 	lda #0
 	sta score_for_eat_egg_high
@@ -2696,9 +2765,9 @@ calculate_score_values_for_maze
 	cld  ;clear decimal
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
-add_segment_to_player_body  ;TODO: completion needed
+add_segment_to_player_body
 
     ldx #5
 add_segment_to_player_or_enemy_snake_body
@@ -2741,31 +2810,31 @@ add_segment_to_player_or_enemy_snake_body
 .new_segment_coords_not_on_8_pixel_boundary
     ldx new_last_segment_pointer
 	ldy player_and_enemy_table-3,x  ;player or enemy snake new segment direction
-	jsr @LAD73
-	cpy #4
-	jsr @LAD6B
-	inx
-	jsr @LAD73
-	cpy #1
+	jsr .update_last_segment_coord
+	cpy #DIRECTION_LEFT
+	jsr .update_new_segment_coord
+	inx  ;switch to pointer to reference next coordinate
+	jsr .update_last_segment_coord
+	cpy #DIRECTION_UP
 
-@LAD6B
-    bne .update_new_segment_column
+.update_new_segment_coord  ;perform check for column and row, save the update
+    bne .store_new_segment_coord
 	clc
 	adc #8
-.update_new_segment_column
-    sta player_and_enemy_table+1,x  ;player or enemy snake new segment column
+.store_new_segment_coord
+    sta player_and_enemy_table+1,x  ;player or enemy snake new segment column or row
 	rts
 
-@LAD73
-    lda player_and_enemy_table-2,x  ;player or enemy snake last segment column
+.update_last_segment_coord
+    lda player_and_enemy_table-2,x  ;player or enemy snake last segment column or row
 	sec
 	sbc #6
-	and #248
+	and #%11111000  ;248
 	clc
 	adc #6
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 handle_eat_snake_body_update
 
@@ -2773,7 +2842,7 @@ handle_eat_snake_body_update
 perform_eat_snake_body_update
     jsr get_screen_coordinates_for_last_segment  ;enemy snake
 	jsr clear_block_at_screen_coordinates
-	ldx temp1  ;points to player or enemy snake
+	ldx temp2  ;points to player or enemy snake
 	dec player_and_enemy_table,x  ;player or enemy snake number of segments
 	lda player_and_enemy_table,x  ;player or enemy snake number of segments
 	cmp #2  ;are head and at least one body segment still left?
@@ -2789,7 +2858,7 @@ perform_eat_snake_body_update
 .end_eat_snake_body_update
     rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 check_if_player_eats_enemy_snake_head
 
@@ -2812,11 +2881,11 @@ check_if_player_eats_enemy_snake_head
 .end_player_eats_snake_head
     rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 handle_player_and_enemy_snake_interactions
 
-    ;-------------------------------------------------------------------------------
+    ;----------------------------------------------------------------------------------------------
     ; clear the status variables which are set when player / enemy snakes each one another
     ; and used to add to score, and decide if a snake is dead or not
     ldx #11
@@ -2827,17 +2896,17 @@ handle_player_and_enemy_snake_interactions
 	bpl .clear_interaction_status_loop
 	sta $7c
 
-    ;-------------------------------------------------------------------------------
+    ;----------------------------------------------------------------------------------------------
     ; check if player snake eats any enemy snake body segments
 	ldx #31  ;point to first snake table data
 	txa
 .check_each_enemy_for_eaten_segments_loop
-    sta $05  ;player or enemy snake data table pointer
+    sta temp_snake_data_pointer1
 	stx snake_data_pointer
 	lda enemy_snake_table-1,x  ;delay for snake to enter cave
 	bne .exit_check_for_eaten_segments
 
-    ;-------------------------------------------------------------------------------
+    ;----------------------------------------------------------------------------------------------
     ; check if player snake eats an enemy body segment
 	lda enemy_snake_table,x  ;enemy snake number of segments
 	sta body_segments
@@ -2854,7 +2923,7 @@ handle_player_and_enemy_snake_interactions
     cmp #48
 	bcc .get_next_enemy_segment_coordinate
 
-    ;-------------------------------------------------------------------------------
+    ;----------------------------------------------------------------------------------------------
     ; a segment can be eaten, update status table
 	ldx $7c
 	lda #128
@@ -2872,7 +2941,7 @@ handle_player_and_enemy_snake_interactions
 	jsr check_if_player_eats_enemy_snake_head
 	bcs .get_next_enemy_segment_pointer  ;snake head not eaten
 
-    ;-------------------------------------------------------------------------------
+    ;----------------------------------------------------------------------------------------------
     ; enemy snake head can be eaten, update status table
 	ldx $7c
 	lda #128
@@ -2890,7 +2959,7 @@ handle_player_and_enemy_snake_interactions
 	jsr check_if_player_eats_enemy_snake_head
 	bcs .get_next_enemy_segment_pointer  ;snake head not eaten
 
-    ;-------------------------------------------------------------------------------
+    ;----------------------------------------------------------------------------------------------
     ; enemy snake head can be eaten, update status table
 	ldx $7c
 	lda #128
@@ -2898,7 +2967,7 @@ handle_player_and_enemy_snake_interactions
 
 .continue_to_next_snake
     inc $7c
-	lda $05  ;player or enemy snake data table pointer
+	lda temp_snake_data_pointer1
 	clc
 	adc #30  ;offset to next snake data
 	tax
@@ -2909,7 +2978,7 @@ handle_player_and_enemy_snake_interactions
     lda #0
 	sta $7c
 
-    ;-------------------------------------------------------------------------------
+    ;----------------------------------------------------------------------------------------------
     ; check if any enemy snake eats player body segments
 	ldx #31  ;point to first snake table data
 .check_if_each_enemy_eats_segments_loop
@@ -2924,7 +2993,7 @@ handle_player_and_enemy_snake_interactions
 	lda $31,x
 	bne .skip_to_next_enemy_snake
 
-    ;-------------------------------------------------------------------------------
+    ;----------------------------------------------------------------------------------------------
     ; check if enemy snake eats any player body segments
 	ldx player_body_segments
 	dex
@@ -2932,12 +3001,12 @@ handle_player_and_enemy_snake_interactions
 	ldx #9
 .check_if_an_enemy_eats_any_segments_loop
 
-    ;-------------------------------------------------------------------------------
+    ;----------------------------------------------------------------------------------------------
     ; check if a player body segment is eaten
-    stx $06
+    stx temp_snake_data_pointer2
 	ldy snake_data_pointer
 	lda #2
-	sta temp2
+	sta temp3
 .check_if_an_enemy_eats_a_segment_loop
     lda enemy_snake_table+6,y  ;enemy snake head column, row
 	sec
@@ -2950,10 +3019,10 @@ handle_player_and_enemy_snake_interactions
 	bcs .get_next_segment_pointer
 	inx
 	iny
-	dec temp2
+	dec temp3
 	bne .check_if_an_enemy_eats_a_segment_loop
 
-    ;-------------------------------------------------------------------------------
+    ;----------------------------------------------------------------------------------------------
     ; a segment can be eaten, update status table
 	ldx $7c
 	lda #128
@@ -2961,7 +3030,7 @@ handle_player_and_enemy_snake_interactions
 	bne .skip_to_next_enemy_snake  ;always branch
 
 .get_next_segment_pointer
-    lda $06
+    lda temp_snake_data_pointer2
 	clc
 	adc #3  ;to point to next player snake body segment data
 	tax
@@ -2977,7 +3046,7 @@ handle_player_and_enemy_snake_interactions
 	cmp #92  ;last enemy snake offset
 	bcc .check_if_each_enemy_eats_segments_loop
 
-    ;-------------------------------------------------------------------------------
+    ;----------------------------------------------------------------------------------------------
     ; check the result of the player and enemy snake eating routines above
 .check_and_handle_snake_body_or_head_being_eaten
 
@@ -3101,25 +3170,12 @@ handle_player_and_enemy_snake_interactions
 .end_has_not_eaten_all_enemy_snakes
     rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; Junk bytes not used, they could be replaced with !fill 200,0 but are kept to allow
 ; a matching binary comparison with the original program
-data_junk_bytes
-    !byte $1a, $af, $20, $62, $b3, $20, $e4, $b3, $e8, $e0, $07, $d0, $f2, $a9, $40, $85
-    !byte $1e, $a9, $50, $85, $1f, $a5, $10, $38, $e9, $01, $0a, $aa, $bd, $02, $af, $85
-    !byte $c2, $bd, $03, $af, $85, $c3, $a0, $00, $98, $48, $b1, $c2, $20, $62, $b3, $68
-    !byte $a8, $a5, $1e, $18, $69, $08, $85, $1e, $c8, $c0, $06, $d0, $eb, $20, $29, $b3
-    !byte $09, $20, $85, $35, $e6, $28, $a5, $28, $f0, $07, $c9, $7f, $f0, $03, $4c, $8c
-    !byte $af, $20, $3d, $b0, $20, $29, $b3, $09, $20, $c5, $35, $f0, $e7, $4c, $73, $b2
-    !byte $a9, $3c, $85, $1e, $a2, $07, $a0, $00, $a9, $4e, $85, $1f, $8a, $48, $20, $7e
-    !byte $b3, $68, $aa, $a9, $00, $91, $00, $a0, $14, $91, $00, $20, $e4, $b3, $ca, $10
-    !byte $e5, $60, $54, $5c, $b4, $bc, $be, $be, $be, $be, $47, $01, $0d, $05, $20, $4f
-    !byte $16, $05, $12, $20, $3e, $ad, $20, $73, $b2, $20, $ee, $ab, $20, $c1, $b1, $a9
-    !byte $38, $85, $1e, $a9, $58, $85, $1f, $a2, $00, $bd, $c2, $af, $20, $62, $b3, $20
-    !byte $e4, $b3, $e8, $e0, $09, $d0, $f2, $20, $2a, $a7, $20, $2a, $a7, $20, $67, $a1
-    !byte $20, $2a, $a7, $4c, $2a, $a7, $05, $ff
+    !source "junk1.asm"
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 enemy_snake_egg_sprite
     !byte %00000000
@@ -3157,7 +3213,7 @@ data_enemy_snake_table_offsets
 	!byte 61
 	!byte 91
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 clear_egg_variables
 
@@ -3167,7 +3223,7 @@ clear_egg_variables
 	sta player_egg_location_column  ;set to zero
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; Set 16-bit egg countdown timer used for enemy / player egg state changes
 ; Used to delay enemy/player egg state changes (develop / lay / hatch)
 
@@ -3186,7 +3242,7 @@ set_egg_countdown_timer
 	sta egg_countdown_low  ;set to a pseudo-random value in the range 15..63
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 clear_developing_egg_sprite
 
@@ -3196,7 +3252,7 @@ clear_developing_egg_sprite
 	sta pixel_data_high
 	jmp erase_bitmap_on_screen
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 update_egg_timers
 
@@ -3216,7 +3272,7 @@ update_egg_timers
 .end_update_egg_timers
     rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 reset_developing_egg_status_for_enemy_snake
 
@@ -3231,7 +3287,7 @@ reset_developing_egg_status_for_enemy_snake
 .end_reset_developing_egg_status
     rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 handle_player_and_enemy_snake_eggs
 
@@ -3284,7 +3340,7 @@ handle_player_and_enemy_snake_eggs
 	bpl .check_for_dead_snake_loop
 	bmi .goto_perform_player_egg_actions  ;always branch
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 perform_enemy_snake_egg_actions
 
@@ -3421,13 +3477,13 @@ perform_enemy_snake_egg_actions
     ; point to the last segment for the snake with a developing egg
     ldy enemy_snake_with_egg
 	ldx data_enemy_snake_table_offsets,y
-	stx $06
+	stx temp_snake_data_pointer2
 	lda enemy_snake_table,x  ;enemy snake number of segments
 	asl
 	adc enemy_snake_table,x  ;enemy snake number of segments
-	adc $06
+	adc temp_snake_data_pointer2
 	adc #4
-	sta $06
+	sta temp_snake_data_pointer2
 	jsr get_screen_coordinates_for_sprite
 
 .plot_enemy_egg_on_screen
@@ -3439,7 +3495,7 @@ perform_enemy_snake_egg_actions
 	sta pixel_data_high
 	jsr plot_bitmap_on_screen
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 perform_player_egg_actions
 
@@ -3554,11 +3610,11 @@ perform_player_egg_actions
 	asl
 	adc player_body_segments
 	adc #4
-	sta $06  ;points to the segment holding the egg to be laid
+	sta temp_snake_data_pointer2  ;points to the segment holding the egg to be laid
 	jsr get_screen_coordinates_for_sprite  ;get this screen coordinate for plotting on screen
 	jmp .plot_player_egg_on_screen
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 perform_plot_player_egg_on_screen
 
@@ -3574,15 +3630,15 @@ perform_plot_player_egg_on_screen
 	sta pixel_data_high
 	jmp plot_bitmap_on_screen
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 get_screen_coordinates_for_last_segment
 
     lda player_and_enemy_table,x  ;player or enemy snake number of segments
-	stx temp1
+	stx temp2
 	asl
 	adc player_and_enemy_table,x  ;player or enemy snake number of segments
-	adc temp1
+	adc temp2
 	tax  ;player or enemy snake pointer to last segment
 
 	ldy #2
@@ -3595,7 +3651,7 @@ get_screen_coordinates_for_last_segment
 .end_screen_coordinates_for_last_segment
     rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 set_egg_screen_column_row
 
@@ -3603,11 +3659,11 @@ set_egg_screen_column_row
 	sta player_egg_location_column
 	lda screen_row
 	sta player_egg_location_row
-	lda segment_direction
+	lda current_segment_direction
 	sta $2a
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; frog sprite data
 
 data_frog_top_left
@@ -3650,7 +3706,7 @@ data_frog_bottom_right
     !byte %00000000
     !byte %00000000
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 data_frog_column_increments
     !byte 0
@@ -3692,7 +3748,7 @@ data_to_get_frog_column_increments
 	!byte 0
 	!byte 11
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 set_frog_to_display_on_screen
 
@@ -3705,7 +3761,7 @@ goto_advance_random_state
 	sta frog_display_duration
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 check_if_frog_eats_egg
 
@@ -3734,7 +3790,7 @@ check_if_frog_eats_egg
     lda #3  ;egg is not eaten, the egg status (hatchable egg) is returned in A (remains as hatchable egg)
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 handle_frog_actions
 
@@ -4014,7 +4070,7 @@ plot_frog_sprite_on_screen
 .goto_plot_bitmap_on_screen_2
     jmp plot_bitmap_on_screen
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 data_vic_system_registers
     !byte %00001100  ;_VIC_SCREEN_LEFT_EDGE = $9000  ;36864 bits 0-6 horizontal centering, bit 7 sets interlace scan
@@ -4025,11 +4081,17 @@ data_vic_system_registers
 	!byte %00010111  ;_VIC_CR3 = $9003  ;36867, used for setting number of rows displayed
                      ;  bit 7: raster beam location bit 0 (n/a here)
                      ;  bit 6-1: 22 means 11 character lines / rows
-                     ;  bit 0: 1 tall characters (16 pixels high by 8 pixels wide)
+                     ;  bit 0: 1 tall characters (16-pixels tall by 8 pixels wide)
 	!byte 0  ;_VIC_CR4 = $9004  ;36868, raster beam location bits (n/a here)
-	!byte %10001100  ;_VIC_CR5 = $9005  ;36869, used for setting custom characters location (n/a here)
-                     ;  bit 7-4: 1000 + _VIC_CR2 bit 7 (is 1) means screen is located at $1000 (decimal), and colour map at $9600 (38400)
-                     ;  bit 3-0: 1100 means character map is located at $1000 (4096)
+
+	!byte %10001100  ;_VIC_CR5 = $9005  ;36869 provides the screen and pixel bitmap memory addresses
+                     ;  bit 7-4: 1000. Bit 7 needs to viewed as 0 (see COMPUTE! Mapping the VIC page 129) so these bits
+                     ;  are now 0000. To complete the 14-bit screen map address location, _VIC_CR2 bit 7 is added (is 1)
+                     ;  and completes with bits 0 0000 0000. The result is 0000 10 0000 0000 which means the
+                     ;  screen matrix is located at $0200 (512), and colour map at $9600 (38400)
+                     ;  bit 3-0: 1100 means the 8-byte pixel bitmaps are located at $1000 (4096)
+                     ;  also see explanations at _BITMAP_GRID and initialise_bitmap_grid_index
+
 	!byte 0  ;_VIC_CR6 = $9006  ;36870  light pen horizontal screen location (n/a here)
 	!byte 0  ;_VIC_CR7 = $9007  ;36871  light pen vertical screen location (n/a here)
 	!byte 255  ;_VIC_CR8 = $9008  ;36872  paddle X location (n/a here)
@@ -4044,7 +4106,7 @@ data_vic_system_registers
                      ;  bit 7-4 is 0 for black background
                      ;  bit 3-0 is 14 for blue border
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; Initialise Vic system registers and timers
 
 init_system_registers_and_timers
@@ -4069,29 +4131,34 @@ init_system_registers_and_timers
 	sta $9127
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 draw_maze_and_set_enemy_snake_start_position
 
     jsr initialise_zero_page
-	jsr draw_maze
+	jsr draw_maze_on_screen
 	jmp set_enemy_snake_start_position
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
+; Start game by pressing joystick fire button or align screen position with joystick direction
 
 read_joystick_to_start_game
 
     jsr read_joystick
-	bcc .valid_joystick_action
+	bcc .handle_joystick_action  ;valid joystick action can be handled
 	rts
 
-.valid_joystick_action
+.handle_joystick_action
     cmp #JOY_FIRE
-	bne .valid_joystick_move_direction
+	bne .handle_joystick_movement_for_screen_alignment
+    
+    ; fire button pressed, start the game
 	jsr clear_all_sound_channels
 	jmp start_game_play
 
-.valid_joystick_move_direction
+.handle_joystick_movement_for_screen_alignment
+
+    ; allow the screen to be centered vertically and horizontally
     ldx _VIC_SCREEN_LEFT_EDGE
 	ldy _VIC_SCREEN_TOP_EDGE
 	cmp #JOY_UP
@@ -4118,7 +4185,7 @@ read_joystick_to_start_game
     dex
 	jmp .save_screen_alignment
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 data_scrolling_heading_message
 
@@ -4149,7 +4216,7 @@ data_scrolling_heading_message
 	!byte $60
 	!byte 0
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 prepare_scroll_message
 
@@ -4165,7 +4232,7 @@ prepare_scroll_message
     ; store the first part of the scroll message
 	bne .store_scroll_message_line  ;always branch
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 display_scroll_message
 
@@ -4191,7 +4258,7 @@ display_scroll_message
 	stx screen_column
 	jsr plot_block_at_screen_coordinates
 
-    ;-------------------------------------------------------------------------------
+    ;----------------------------------------------------------------------------------------------
     ; store 20 characters of the message line in the scroll_message_store
     ; starting from the last index position to display later via display_scroll_message
 .store_scroll_message_line
@@ -4228,7 +4295,7 @@ display_scroll_message
 	sta scroll_message_store,y
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 data_heading_publisher
 	!pet "creative"
@@ -4246,12 +4313,12 @@ data_heading_game_title
 	!pet "serpentine"
 	!byte $00
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 display_opening_title_screen
 
     jsr set_screen_base_colours
-	jsr initialise_0200_onwards_with_increments_of_11
+	jsr initialise_bitmap_grid_index  ;the first and the only necessary call to this routine
 	jsr clear_screen_and_add_heading_block
 
     ; prepare start up sound
@@ -4343,7 +4410,7 @@ display_opening_title_screen
 
 	beq .play_main_theme_tune  ;always branch
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 data_eat_frog_egg_enemy_head_sound_clip_extra
     !byte $01, $ca, $01, $cc, $01, $ce, $01, $d0
@@ -4462,7 +4529,7 @@ data_eat_snake_body_2_sound_clip
 	!byte >data_eat_snake_body_2_sound_clip_extra
 	!byte $ff
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 play_about_to_start_maze_tune
 
@@ -4480,7 +4547,7 @@ play_about_to_start_maze_tune
 	bne .start_maze_sound_loop
 	jmp prepare_snake_hissing_sound
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 prepare_eat_frog_egg_snake_head_sound
 
@@ -4488,7 +4555,7 @@ prepare_eat_frog_egg_snake_head_sound
 	ldy #>data_eat_frog_egg_enemy_head_sound_clip
 	jmp prepare_sound_data
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 data_snake_hissing_sound_clip_extra
 	!byte $28, $fe, $28, $00, $ff
@@ -4499,7 +4566,7 @@ data_snake_hissing_sound_clip
 	!byte >data_snake_hissing_sound_clip_extra
 	!byte $ff
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 play_snake_hissing_sound
 
@@ -4517,7 +4584,7 @@ prepare_snake_hissing_sound
 .skip_snake_hissing_sound
     rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 handle_player_dies
 
@@ -4576,7 +4643,7 @@ clear_maze_objects_and_player_loses_life
 
 	jmp play_one_life
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 end_of_game
 
@@ -4630,7 +4697,7 @@ end_of_game
 .goto_start_game_play
     jmp start_game_play
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 data_last_post_end_sound_clip_extra
 	!byte $19, $9c, $01, $00, $0f, $9c, $01, $00
@@ -4648,7 +4715,7 @@ data_last_post_end_sound_clip
 	!byte >data_last_post_end_sound_clip_extra
 	!byte $ff
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 start_baby_snake_goes_home
 
@@ -4674,7 +4741,7 @@ start_baby_snake_goes_home
     ; set player snake (baby hatched) coordinates from the baby snake egg coordinates
 	ldx #2
 .apply_egg_coords_loop
-    lda $2a,x  ;get $2c (player_egg_location_row), $2b (player_egg_location_column), $2a (direction)
+    lda player_egg_location_column-1,x  ;get $2c (player_egg_location_row), $2b (player_egg_location_column), $2a (direction)
 	sta player_and_enemy_table+5,x  ;update $87 (snake head screen row), $86 (snake head screen column), $85 (snake head direction)
 	dex
 	bpl .apply_egg_coords_loop
@@ -4691,7 +4758,7 @@ start_baby_snake_goes_home
 	sta player_body_segments
 	jmp add_one_to_player_lives
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 player_snake_goes_home
 
@@ -4722,7 +4789,7 @@ player_or_baby_snake_goes_home_loop
 .move_snake_and_get_a_new_direction
     jsr .set_snake_direction  ;up
 	bcc .move_snake_and_check_direction  ;direction change is allowed
-	ldy snake_direction
+	ldy desired_snake_direction
 	lda data_directions-1,y
 	bne .move_snake_and_get_a_new_direction
 
@@ -4796,7 +4863,7 @@ player_or_baby_snake_goes_home_loop
     lda #DIRECTION_RIGHT
 .set_snake_direction
     sta player_snake_direction  ;right
-	sta snake_direction  ;right
+	sta desired_snake_direction  ;right
 	jsr .set_snake_header_screen_coords_and_check_direction
 	jmp check_if_direction_change_is_valid
 
@@ -4820,7 +4887,7 @@ player_or_baby_snake_goes_home_loop
     ldy #10
 	jmp delay_using_Y
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 play_sound
 
@@ -4840,24 +4907,24 @@ play_sound
 	sta _VIC_VOLUME
 	rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
-set_current_maze_to_next_one
+set_maze_level_to_next_one
 
-    ldx current_maze
+    ldx maze_level
 	cpx #99
 	bcs .max_maze_number_so_end
 	inx
-	stx current_maze
+	stx maze_level
 .max_maze_number_so_end
     rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 player_has_eaten_all_enemy_snakes
 
     lda #20  ;apart from the delay, 20 iterations appears unnecessary
-	sta $1f
+	sta game_speed_counter
 .eaten_all_snakes_loop
     jsr play_sounds
 	jsr perform_enemy_snake_movement
@@ -4870,11 +4937,11 @@ player_has_eaten_all_enemy_snakes
 	jsr plot_entire_snake_on_screen
 	ldy #17
 	jsr delay_using_Y
-	dec $1f
+	dec game_speed_counter
 	bne .eaten_all_snakes_loop
 
 	jsr clear_all_sound_channels
-	jsr set_current_maze_to_next_one
+	jsr set_maze_level_to_next_one
 	jsr player_snake_goes_home
 
     ;check if player laid an egg
@@ -4885,24 +4952,24 @@ player_has_eaten_all_enemy_snakes
 .goto_play_one_life
     jmp play_one_life
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 clear_maze_objects
 
     ; clear all enemy snakes from screen
     ldx #38
 .clear_each_enemy_snake_on_screen_loop
-    stx $06  ;points to player or enemy snake head
+    stx temp_snake_data_pointer2  ;points to player or enemy snake head
 	stx snake_data_pointer
 
     ; use each enemy snake segment coordinates and clear each from the screen
 	lda enemy_snake_table-7,x  ;number of enemy snake body segments
-	sta temp2
+	sta temp3
 .clear_one_enemy_snake_on_screen_loop
     jsr get_screen_coordinates_for_sprite
 	jsr clear_block_at_screen_coordinates
 	jsr add_3_to_point_to_next_segment
-	dec temp2
+	dec temp3
 	bne .clear_one_enemy_snake_on_screen_loop
 
 	lda snake_data_pointer
@@ -4931,7 +4998,7 @@ clear_maze_objects
 .clear_maze_objects_end
     rts
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 
 data_player_goes_home_sound_clip_extra
 	!byte $06, $cd, $06, $c3, $18, $00, $06, $c3
@@ -4967,94 +5034,11 @@ data_baby_snake_sound_clip
 	!byte >data_baby_snake_sound_clip_extra
 	!byte $ff
 
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; Junk bytes needed to pad file to 8192 bytes for A000 cartridge format
 ; These bytes could be replaced with !fill 1309,0 but are kept to allow
 ; a matching binary comparison with the original program
+    !source "junk2.asm"
 
-data_junk_padding_bytes
-    !byte $10, $01, $15, $0c, $20, $1a, $15, $1a, $05, $0c, $0f, $c0, $78, $a9, $02, $8d
-    !byte $1e, $91, $20, $83, $b4, $20, $9d, $a1, $a9, $00, $85, $00, $a9, $10, $85, $01
-    !byte $a2, $10, $a0, $00, $a9, $ff, $91, $00, $c8, $d0, $fb, $e6, $01, $ca, $d0, $f6
-    !byte $a0, $f2, $a9, $05, $99, $ff, $95, $88, $d0, $fa, $a2, $00, $bd, $e3, $ba, $18
-    !byte $69, $40, $9d, $00, $01, $e8, $e0, $0c, $90, $f2, $a9, $01, $85, $5e, $a9, $00
-    !byte $85, $5d, $85, $1f, $aa, $0a, $a8, $20, $38, $a9, $a5, $1f, $18, $69, $04, $85
-    !byte $1f, $c9, $55, $90, $ef, $02, $30, $00, $00, $81, $c3, $3c, $24, $24, $3c, $24
-    !byte $24, $18, $02, $7c, $58, $1c, $74, $44, $06, $18, $01, $7e, $d8, $18, $38, $28
-    !byte $0c, $18, $40, $3e, $1a, $38, $2e, $22, $60, $18, $80, $7e, $1b, $18, $1c, $14
-    !byte $30, $98, $40, $7c, $1c, $1c, $18, $18, $3c, $18, $00, $7c, $9c, $1c, $18, $18
-    !byte $3c, $00, $07, $0f, $0f, $07, $00, $3f, $7f, $80, $3f, $75, $c9, $ca, $72, $2b
-    !byte $1f, $e0, $fe, $ff, $ff, $fe, $fc, $ff, $ff, $00, $ff, $5d, $92, $52, $4c, $aa
-    !byte $ff, $00, $0e, $fb, $fb, $0e, $00, $fc, $fe, $01, $fc, $77, $4b, $4a, $34, $a8
-    !byte $f0, $00, $00, $01, $01, $00, $00, $3f, $7f, $80, $3f, $75, $c9, $ca, $72, $2b
-    !byte $1f, $3c, $ff, $ff, $ff, $ff, $7e, $ff, $ff, $00, $ff, $5d, $92, $52, $4c, $aa
-    !byte $ff, $00, $00, $80, $80, $00, $00, $fc, $fe, $01, $fc, $77, $4b, $4a, $34, $a8
-    !byte $f0, $00, $70, $df, $df, $70, $00, $3f, $7f, $80, $3f, $75, $c9, $ca, $72, $2b
-    !byte $1f, $07, $7f, $ff, $ff, $7f, $3f, $ff, $ff, $00, $ff, $5d, $92, $52, $4c, $aa
-    !byte $ff, $00, $e0, $f0, $f0, $e0, $00, $fc, $fe, $01, $fc, $77, $4b, $4a, $34, $a8
-    !byte $f0, $07, $1f, $7f, $78, $f0, $e0, $e0, $e0, $f0, $78, $7f, $1f, $07, $00, $00
-    !byte $00, $00, $e0, $f0, $78, $00, $00, $00, $00, $00, $78, $f0, $e0, $00, $00, $00
-    !byte $00, $00, $00, $00, $c0, $c0, $c0, $c0, $f8, $fc, $cc, $cc, $cc, $cc, $00, $00
-    !byte $00, $00, $00, $00, $00, $00, $00, $3c, $7e, $e7, $c3, $e7, $7e, $3c, $00, $00
-    !byte $00, $00, $00, $00, $00, $00, $00, $37, $3f, $39, $30, $39, $3f, $3f, $30, $30
-    !byte $30, $00, $00, $00, $0e, $06, $06, $06, $86, $c6, $c6, $c6, $86, $0f, $00, $00
-    !byte $00, $00, $00, $00, $00, $18, $00, $38, $18, $18, $18, $18, $18, $3c, $00, $00
-    !byte $00, $00, $00, $00, $1c, $36, $30, $30, $fc, $30, $30, $30, $30, $30, $00, $00
-    !byte $00, $00, $00, $00, $00, $30, $30, $30, $fc, $30, $30, $30, $36, $1c, $00, $00
-    !byte $00, $00, $00, $00, $00, $00, $00, $3c, $7e, $e7, $ff, $e0, $7e, $3c, $00, $00
-    !byte $00, $00, $00, $00, $00, $00, $00, $37, $3d, $38, $30, $30, $30, $30, $00, $00
-    !byte $00, $00, $00, $00, $00, $00, $00, $00, $80, $00, $00, $00, $00, $00, $00, $00
-    !byte $00, $07, $18, $20, $47, $4e, $8c, $98, $90, $80, $80, $80, $40, $40, $20, $18
-    !byte $07, $e0, $18, $04, $02, $02, $01, $01, $01, $01, $01, $01, $02, $02, $04, $18
-    !byte $e0, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
-    !byte $00, $00, $00, $00, $00, $00, $7f, $5f, $6f, $77, $58, $4b, $6b, $3b, $1b, $0b
-    !byte $07, $1c, $1f, $10, $18, $17, $ef, $ef, $ff, $ff, $00, $ff, $c1, $d5, $d5, $c1
-    !byte $ff, $00, $00, $c0, $40, $40, $f0, $f8, $fc, $fe, $01, $ff, $c7, $c7, $ff, $ff
-    !byte $ff, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
-    !byte $00, $00, $00, $00, $01, $42, $3c, $3e, $7e, $3e, $1c, $24, $04, $00, $00, $00
-    !byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
-    !byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
-    !byte $00, $00, $00, $00, $81, $42, $3c, $3e, $ff, $7f, $3e, $24, $44, $04, $00, $00
-    !byte $00, $00, $00, $80, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
-    !byte $00, $00, $02, $01, $00, $00, $00, $00, $07, $00, $00, $00, $00, $00, $00, $00
-    !byte $00, $00, $00, $00, $81, $42, $3c, $3e, $ff, $7f, $3f, $18, $44, $84, $06, $00
-    !byte $00, $00, $40, $80, $00, $00, $00, $80, $e0, $00, $00, $00, $00, $00, $00, $00
-    !byte $00, $08, $06, $01, $00, $00, $00, $00, $07, $18, $01, $00, $00, $00, $01, $00
-    !byte $00, $00, $00, $00, $89, $48, $3c, $32, $eb, $6f, $7f, $1c, $00, $84, $04, $02
-    !byte $00, $00, $20, $40, $00, $00, $40, $00, $f0, $00, $00, $80, $00, $00, $00, $00
-    !byte $00, $10, $0c, $02, $00, $00, $00, $00, $0e, $30, $40, $06, $00, $00, $03, $00
-    !byte $00, $00, $00, $08, $88, $00, $3c, $32, $e1, $6d, $6f, $3e, $1c, $80, $02, $01
-    !byte $00, $18, $20, $00, $00, $20, $40, $00, $f8, $04, $00, $10, $40, $00, $00, $00
-    !byte $00, $10, $08, $00, $00, $00, $00, $00, $18, $40, $80, $04, $08, $00, $06, $00
-    !byte $00, $00, $08, $00, $00, $00, $14, $32, $e1, $0d, $2b, $2c, $1c, $00, $00, $00
-    !byte $01, $08, $00, $00, $10, $20, $00, $00, $3c, $00, $00, $08, $00, $20, $00, $00
-    !byte $00, $30, $18, $04, $03, $06, $00, $00, $00, $00, $00, $00, $04, $fe, $38, $00
-    !byte $00, $00, $00, $20, $30, $fe, $18, $06, $00, $00, $44, $38, $08, $04, $0c, $00
-    !byte $00, $1f, $1f, $3f, $3f, $7f, $7f, $ff, $ff, $f8, $f8, $fc, $fc, $fe, $fe, $ff
-    !byte $ff, $a9, $00, $85, $06, $20, $ee, $ab, $20, $21, $af, $a9, $00, $85, $09, $85
-    !byte $14, $85, $0d, $85, $0f, $a9, $50, $85, $2a, $a9, $75, $85, $2b, $20, $68, $bf
-    !byte $a9, $04, $85, $29, $a9, $80, $85, $68, $a9, $7d, $85, $5b, $a9, $be, $85, $67
-    !byte $85, $5a, $a9, $7c, $85, $11, $85, $12, $85, $13, $a9, $80, $85, $15, $a9, $ff
-    !byte $85, $16, $a9, $7e, $85, $0c, $a2, $03, $a9, $7e, $95, $63, $bd, $05, $b5, $95
-    !byte $5f, $ca, $10, $f4, $a9, $7f, $85, $63, $a9, $00, $85, $34, $85, $69, $85, $31
-    !byte $a2, $09, $95, $b8, $ca, $10, $fb, $a2, $0f, $a9, $7e, $95, $7a, $ca, $10, $f9
-    !byte $a9, $00, $a2, $06, $95, $17, $ca, $10, $fb, $a2, $09, $95, $c2, $ca, $10, $fb
-    !byte $a2, $0f, $20, $56, $b3, $c9, $7d, $b0, $f9, $c9, $10, $90, $f5, $95, $4a, $20
-    !byte $56, $b3, $95, $3a, $ca, $10, $eb, $a9, $01, $85, $06, $20, $ee, $ab, $20, $28
-    !byte $a5, $20, $b0, $a6, $20, $93, $a2, $20, $e6, $a1, $20, $47, $aa, $20, $94, $a7
-    !byte $20, $3e, $a8, $20, $99, $ab, $20, $a4, $ac, $20, $a7, $ad, $20, $19, $ae, $20
-    !byte $cb, $a3, $20, $d7, $a2, $20, $a4, $aa, $20, $29, $ac, $20, $e2, $a8, $20, $80
-    !byte $a8, $20, $82, $a3, $20, $d5, $a4, $20, $5c, $b0, $20, $3d, $b0, $20, $72, $bf
-    !byte $e6, $28, $4c, $21, $bf, $a9, $00, $85, $37, $85, $33, $85, $5c, $60, $02, $ad
-    !byte $71, $6f, $a0, $00, $99, $21, $6f, $60, $4f, $50, $50, $45, $61, $c1, $53, $30
-    !byte $31, $2c, $20, $46, $49, $4c, $45, $53, $20, $53, $43, $52, $41, $54, $43, $48
-    !byte $45, $44, $2c, $30, $31, $2c, $30, $30, $00, $43, $53, $45, $52, $50, $45, $4e
-    !byte $54, $49, $4e, $45, $20, $24, $36, $0d, $00, $43, $33, $50, $62, $6d, $43, $4c
-    !byte $45, $41, $52, $20, $62, $73, $57, $48, $41, $20, $20, $20, $62, $7b, $43, $4c
-    !byte $45, $41, $50, $20, $62, $7f, $50, $4c, $4f, $54, $43, $48, $62, $8e, $50, $42
-    !byte $50, $20, $20, $20, $62, $99, $53, $48, $49, $46, $50, $20, $62, $a3, $44, $53
-    !byte $48, $49, $46, $54, $62, $a9, $4c, $45, $53, $48, $49, $46, $62, $c8, $50, $42
-    !byte $50, $4c, $20, $20, $62, $ca, $53, $48, $49, $46, $20, $20, $00
-
-;-----------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 end_of_program
