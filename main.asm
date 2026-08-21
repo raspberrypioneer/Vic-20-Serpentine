@@ -150,7 +150,6 @@ player_egg_status = $2d  ;0 none; 1 developing; 2 attached/laying; 3 detached an
 
 ; Per-snake timers and collision results
 snake_tick_table = $2e  ;$2e-$30 enemy state/tick values; $31-$33 player-segment-eaten cooldowns
-snake_tick_table_word = $002e
 
 player_segment_eaten_cooldown = $31  ;three bytes, one per enemy; non-zero suppresses repeat body-eat detection
 
@@ -163,7 +162,6 @@ enemy_out_of_range_flag = $3d  ;three bytes: $00 or $80, player head too distant
 frog_display = $40  ;display/path state byte
 frog_location_column = $41
 frog_location_row = $42
-frog_location_column_word = $0041
 frog_action_countdown = $43
 frog_path_index = $44  ;0-7: index into frog movement-increment tables
 frog_plot_erase_flag = $45  ;$00 plot frog; $80 erase frog
@@ -213,7 +211,6 @@ current_enemy_snake_number = $7c  ;0-2: enemy currently being tested; indexes pe
 ; The data tables are initialised at the start of a new player life (initialise_snake_data_in_zero_page) 
 ; and updated during gameplay
 player_and_enemy_table = $80  ;table where player and enemy snake data is held
-player_and_enemy_table_word = $0080  ;table where player and enemy snake data is held (alternate reference)
 enemy_snake_table = $80  ;table where enemy snake data is held (used to indicate enemy snake only)
 player_snake_length = $80  ;number of body segments
 player_snake_direction = $82  ;direction indicator
@@ -244,7 +241,7 @@ scroll_message_store = $0100  ;21 bytes: 20 display characters plus $00 terminat
 ;--------------------------------------------------------------------------------------------------
 ; Player snake table
 ; Data is stored in zero page $80 onwards via initialise_snake_data_in_zero_page
-; See references to zero page data for each snake in player_and_enemy_table, player_and_enemy_table_word.
+; See references to zero page data for each snake in player_and_enemy_table.
 
 data_player_snake_for_zero_page
     !byte $03  ;player_snake_length
@@ -267,7 +264,7 @@ data_player_snake_for_zero_page
 ; Enemy snake table for each snake
 ; This data is stored in zero page locations via initialise_snake_data_in_zero_page
 ;   $9e + for snake 1, $bc + for snake 2, $da + for snake 3
-; See references to zero page data for each snake in player_and_enemy_table, player_and_enemy_table_word.
+; See references to zero page data for each snake in player_and_enemy_table.
 
 data_enemy_snake_for_zero_page
     !byte $3c  ;60 delay for snake to enter maze
@@ -395,7 +392,7 @@ initialise_snake_data_in_zero_page
 	ldy #25
 .init_zero_page_loop
 	lda data_player_snake_for_zero_page,y
-	sta player_and_enemy_table_word,y  ;initialise all from table
+	sta+2 player_and_enemy_table,y  ;initialise all from table
 	dey
 	bne .init_zero_page_loop
 
@@ -827,7 +824,7 @@ get_screen_coordinates_for_sprite
 get_screen_coordinates_for_sprite_player  ;points to player snake when used as entry point
 	ldx #2
 .get_sprite_screen_coords_loop
-	lda player_and_enemy_table_word,y  ;player_and_enemy_table with offset for sprite in Y
+	lda+2 player_and_enemy_table,y  ;player_and_enemy_table with offset for sprite in Y
 	sta screen_coords_table,x  ;update $0f (screen_row), $0e (screen_column), $0d (segment_direction)
 	dey
 	dex
@@ -844,7 +841,7 @@ set_screen_coordinates_for_sprite
 	ldx #2
 .set_sprite_screen_coords_loop
     lda screen_coords_table,x  ;get $0f (screen_row), $0e (screen_column), $0d (segment_direction)
-	sta player_and_enemy_table_word,y  ;player_and_enemy_table with offset for sprite in Y
+	sta+2 player_and_enemy_table,y  ;player_and_enemy_table with offset for sprite in Y
 	dey
 	dex
 	bpl .set_sprite_screen_coords_loop
@@ -1211,7 +1208,7 @@ perform_player_or_enemy_snake_movement
 
     ; load working variables from the snake data table
 .load_snake_state_loop
-    lda player_and_enemy_table_word,y  ;player_and_enemy_table with offset for sprite in Y
+    lda+2 player_and_enemy_table,y  ;player_and_enemy_table with offset for sprite in Y
 	sta snake_length,x  ; update snake_length, snake_colour, planned_direction, snake_home_transition_state, snake_exit_pending
 	iny
 	inx
@@ -2666,7 +2663,7 @@ update_all_enemy_snakes
     ; tick value = #128: fully dead, so skip it.
     ; other negative tick values: animate disintegration.
 	ldy temp3  ;temp3 is the matching enemy index: 0, 1, then 2.
-	lda snake_tick_table_word,y  ;$2e, $2f, $30
+	lda+2 snake_tick_table,y  ;$2e, $2f, $30
 	bpl .check_if_snake_should_enter_maze
 	cmp #128
 	beq .goto_delay_and_onto_next_snake
@@ -3162,7 +3159,7 @@ check_player_head_enemy_segment_overlap
     ldy #2
 	ldx selected_snake_record_offset
 .check_player_eats_snake_head_loop
-    lda player_and_enemy_table_word+5,y  ;player head row, then column
+    lda+2 player_and_enemy_table+5,y  ;player head row, then column
 	sec
     sbc player_and_enemy_table+7,x  ;selected enemy segment row, then column
 	bcs .absolute_coordinate_difference
@@ -3229,7 +3226,7 @@ handle_player_and_enemy_snake_interactions
 	ldx selected_snake_record_offset
 	ldy #2
 .check_enemy_head_is_near_player_head
-    lda player_and_enemy_table_word+5,y  ;player snake head row, column
+    lda+2 player_and_enemy_table+5,y  ;player snake head row, column
 	sec
 	sbc enemy_snake_table+7,x  ;enemy snake body row, column
 	bcs .absolute_coordinate_difference_2
@@ -3380,7 +3377,7 @@ handle_player_and_enemy_snake_interactions
 	bne .continue_onto_next_snake
 	lda enemy_head_eaten_flag,x
 	beq .resolve_enemy_body_segment_collision
-	lda player_and_enemy_table_word,y  ;enemy snake number of segments
+	lda+2 player_and_enemy_table,y  ;enemy snake number of segments
 	cmp player_snake_length
 	bcc .enemy_snake_is_smaller_than_player_so_eat_it
 	jmp handle_player_death  ;enemy snake is bigger so player dies
@@ -3659,11 +3656,11 @@ advance_enemy_egg_state
 	bmi .skip_to_next_candidate_snake  ;can't lay a replacement egg immediately after snake has died
 
 	ldy data_enemy_snake_table_offsets,x
-	lda player_and_enemy_table_word,y  ;player or enemy snake number of segments
+	lda+2 player_and_enemy_table,y  ;player or enemy snake number of segments
 	cmp #3
 	bcc .skip_to_next_candidate_snake  ;not enough segments to allow an egg to be laid
 
-	lda player_and_enemy_table_word+4,y  ;snake_exit_pending
+	lda+2 player_and_enemy_table+4,y  ;snake_exit_pending
 	bmi .skip_to_next_candidate_snake
 
     ; develop a new egg
@@ -3698,7 +3695,7 @@ perform_enemy_snake_egg_actions
     ; hatch the enemy snake egg and turn it into a snake
 	ldy enemy_egg_replacement_index  ;0, 1, 2
 	lda #0
-	sta snake_tick_table_word,y  ;$30, $2f, $2e
+	sta+2 snake_tick_table,y  ;$30, $2f, $2e
 	sta enemy_egg_status  ;set to zero (no egg)
 
     ; set the number of snake segments
@@ -3718,7 +3715,7 @@ perform_enemy_snake_egg_actions
     ; update the snake head coordinates from the egg coordinates
 	ldy #2
 .update_snake_head_coords_from_egg_loop
-    lda $0022,y  ;get $24 (enemy_egg_location_row), $23 (enemy_egg_location_column), $22 (segment_direction)
+    lda+2 enemy_egg_direction,y  ;get $24 (enemy_egg_location_row), $23 (enemy_egg_location_column), $22 (segment_direction)
 	sta enemy_snake_table+7,x  ;enemy snake head row, column, direction
 	dex
 	dey
@@ -3880,7 +3877,7 @@ advance_player_egg_state
 .check_if_enemy_snake_eat_egg_loop
     lda enemy_snake_table+7,x  ;enemy snake head row
 	sec
-	sbc $002a,y
+	sbc+2 player_egg_direction,y
 	bcs .enemy_snake_coord_is_bigger
 	eor #255
 	adc #1
@@ -4193,7 +4190,7 @@ handle_frog_actions
 .check_if_frog_is_eaten_loop
     lda player_and_enemy_table+2,x  ;player or enemy snake row, column
 	sec
-	sbc frog_location_column_word,y  ;$42 (frog_location_row), $41 (frog_location_column)
+	sbc+2 frog_location_column,y  ;$42 (frog_location_row), $41 (frog_location_column)
 	bcs .player_or_enemy_snake_coord_is_bigger
 	eor #255
 	adc #1
@@ -4227,7 +4224,7 @@ handle_frog_actions
 .check_tick_and_goto_next_snake
 
     ; determine if the enemy snake is able to eat snake (e.g. is alive)
-    lda snake_tick_table_word,y  ;$30, $2f, $2e
+    lda+2 snake_tick_table,y  ;$30, $2f, $2e
 	bmi .next_snake_and_loop
 
 .add_segment_to_snake_and_remove_frog

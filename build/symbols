@@ -90,7 +90,6 @@
 	SOUND_BASS	= $1
 	plot_high_score_on_screen	= $aa74	; ?
 	data_directions_right_up	= $a3c6
-	snake_tick_table_word+2	= $2e
 	plot_level_and_headings_on_screen	= $a9b5	; ?
 	player_egg_countdown_low	= $28
 	set_player_egg_countdown_timer	= $b044
@@ -170,7 +169,6 @@
 	move_body_segment_on_screen	= $a384
 	player_and_enemy_table	= $80
 	calculate_score_values_for_maze	= $acea	; ?
-	player_and_enemy_table_word+2	= $80
 	data_screen_row_increments	= $a2b7
 	enemy_snake_index	= $4e
 	zero_digit_control_flag	= $62
@@ -362,7 +360,6 @@
 	handle_player_movement	= $a3ed	; ?
 	data_maze_16	= $a6e4
 	data_targeted_direction_thresholds	= $ab67
-	frog_location_column_word+2	= $41
 	data_maze_15	= $a6c8
 	data_player_dies_sound_clip	= $b69c
 	_BITMAP_GRID	= $200
